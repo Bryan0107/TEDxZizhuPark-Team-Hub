@@ -71,6 +71,18 @@ tedxzizhupark/
 - **变量**：`{name}` = 账号显示名，`{time}` = 按时段的 早上好 / 下午好 / 晚上好（English: Good morning / afternoon / evening）；不写变量时系统自动补上姓名。
 - 留空则回退到内置的按时段问候。
 
+### 系统设置五大模块与存储位置
+
+| 模块 | 内容 | 存储 |
+|---|---|---|
+| 通用设置 | 问候语、账号信息、年度与功能偏好 | `app_settings`：`org_greeting`、`feature_prefs`；个人问候语在账号 prefs |
+| 积分规则 | 8 条默认规则，可编辑行为/类型/分值/单位/启停、新增与删除，管理员保存 | `points_rules` 表 |
+| 通知设置 | 7 类通知场景开关、截止提醒提前天数、渠道状态 | `app_settings`：`notification_prefs`（JSON） |
+| 角色与权限 | 角色定义、权限矩阵、已开通账号清单（只读） | 角色在 Auth prefs；账号清单读 `users` 表 |
+| 数据与备份 | 云端连接自检、8 张主要表记录数、5 类 CSV 导出、最近导出时间 | 实时读取云端；导出时间存浏览器 localStorage |
+
+CSV 导出支持：成员名单、积分流水、月度团队报告、任务清单、年度团队统计；单元格已做逗号/引号转义。
+
 ## 5. 前端环境变量（Vercel）
 
 已在 Vercel 项目配置，覆盖 production / preview / development：

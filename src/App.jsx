@@ -15,7 +15,7 @@ import {
   BarChart, Bar, Cell, PieChart, Pie, LineChart, Line, Legend
 } from 'recharts';
 import { teams as initialTeams, members as initialMembers, initialTasks, initialReports, pointTransactions, trendData } from './data';
-import { fetchTable, syncTable, fetchSettings, saveSettings } from './api';
+import { fetchTable, syncTable, fetchSettings, saveSettings, fetchAppSetting, saveAppSetting, removeRow, pingCloud, APPWRITE_ENDPOINT, APPWRITE_PROJECT, DB } from './api';
 import { getCurrentUser, signIn, signOut, updateMyPrefs, roleLabel } from './auth';
 
 const statusTone = {
@@ -88,7 +88,7 @@ const dictionaries = {
     languageSwitched: '界面语言已切换',
     signInTitle: '欢迎回来', signInSubtitle: '登录 TEDxZizhuPark Team Hub，继续记录每一份贡献。',
     signInEmail: '邮箱地址', signInPassword: '登录密码', signInSubmit: '登录 Team Hub', signInLoading: '正在验证…',
-    signInError: '邮箱或密码不正确，请重试。', signInHelp: '无法登录？请联系核心管理团队重置账号。',
+    signInError: '邮箱或密码不正确，请重试。', signInHelp: '无法登录？请联系团队管理组重置账号。',
     signInBrand: '让每一次参与，都被看见。', signInBrandSub: '年度团队运营 · 成员贡献记录 · 内部积分管理',
     signInRemember: '记住此设备', signInSecure: '账号由组织统一开通，登录后即可访问对应权限的工作台。',
     greetingTitle: '个性化问候语', greetingSub: '设置登录后首页的欢迎文案，所有成员账号自动生效',
@@ -152,7 +152,7 @@ const dictionaries = {
     languageSwitched: 'Interface language updated',
     signInTitle: 'Welcome back', signInSubtitle: 'Sign in to TEDxZizhuPark Team Hub and keep every contribution visible.',
     signInEmail: 'Email address', signInPassword: 'Password', signInSubmit: 'Sign in to Team Hub', signInLoading: 'Verifying…',
-    signInError: 'Incorrect email or password. Please try again.', signInHelp: 'Trouble signing in? Ask the core team to reset your account.',
+    signInError: 'Incorrect email or password. Please try again.', signInHelp: 'Trouble signing in? Ask the Team Management Group to reset your account.',
     signInBrand: 'Every contribution deserves to be seen.', signInBrandSub: 'Annual operations · Contribution records · Internal points',
     signInRemember: 'Remember this device', signInSecure: 'Accounts are provisioned by the organization. Your workspace opens with the right permissions after sign-in.',
     greetingTitle: 'Personalized Greeting', greetingSub: 'Customize the welcome message shown on the home page for all provisioned accounts',
@@ -369,8 +369,7 @@ function LoginPage({ onLogin, language, setLanguage }) {
     <section className="login-brand">
       <div className="login-brand-top"><img src="/assets/logo-white.png" alt="TEDxZizhuPark" /></div>
       <div className="login-brand-copy">
-        <span className="login-eyebrow">TEDxZizhuPark · TEAM HUB</span>
-        <h1>Ideas change<br />everything<span>.</span></h1>
+        <h1 className="login-gradient-title">Ideas change<br />everything<span>.</span></h1>
         <p>{t('signInBrand')}</p>
         <small>{t('signInBrandSub')}</small>
       </div>
@@ -380,7 +379,6 @@ function LoginPage({ onLogin, language, setLanguage }) {
     <section className="login-panel">
       <div className="login-panel-top"><button className="language-button" onClick={() => setLanguage(isEn ? 'zh' : 'en')}><Globe2 size={16} /><span>{isEn ? '中文' : 'English'}</span><ChevronDown size={13} /></button></div>
       <form className="login-form" onSubmit={submit}>
-        <span className="login-form-eyebrow">TEAM HUB · V1.0</span>
         <h2>{t('signInTitle')}</h2>
         <p className="login-form-sub">{t('signInSubtitle')}</p>
         <label className="login-field"><span>{t('signInEmail')}</span><input type="email" required autoComplete="username" placeholder="name@tedxzizhupark.com" value={email} onChange={e => setEmail(e.target.value)} /></label>
@@ -452,12 +450,26 @@ function MainApp({ session, onLogout, onSessionUpdate, language, setLanguage }) 
   const closeModal = () => setModal(null);
 
   const exportCsv = (kind = '团队数据') => {
-    const rows = kind === '积分流水'
-      ? [['成员', '团队', '积分类型', '来源', '积分', '状态'], ...transactions.map(t => [t.member, t.team, t.type, t.source, t.points, t.status])]
-      : [['团队', '组长', '成员数', '本月任务', '已完成', '月报状态'], ...teams.map(t => [t.name, t.leader, t.members, t.tasks, t.done, t.status])];
-    const csv = '\ufeff' + rows.map(r => r.join(',')).join('\n');
+    let rows;
+    if (kind === '积分流水' || kind === '个人积分流水') {
+      rows = [['成员', '团队', '积分类型', '来源', '积分', '记录时间', '状态'], ...transactions.map(x => [x.member, x.team, x.type, x.source, x.points, x.date, x.status])];
+    } else if (kind === '成员名单') {
+      rows = [['姓名', '英文名', '邮箱', '所属团队', '职务', '状态', '年度积分', '本月新增', '完成任务'], ...members.map(m => [m.name, m.english, m.email, m.team, m.role, m.status, m.points, m.monthPoints, m.tasks])];
+    } else if (kind === '月度团队报告' || kind === '月度报告') {
+      rows = [['团队', '组长', '月份', '提交时间', '任务数', '工作量(h)', '参与成员', '建议积分', '状态'], ...reports.map(r => [r.team, r.leader, r.month, r.submitted, r.tasks, r.hours, r.active, r.points, r.status])];
+    } else if (kind === '任务清单') {
+      rows = [['任务名称', '所属项目', '所属团队', '负责人', '类型', '截止日期', '优先级', '进度', '状态'], ...tasks.map(x => [x.title, x.project, x.team, x.owner, x.type, x.due, x.priority, `${x.progress}%`, x.status])];
+    } else {
+      rows = [['团队', '组长', '成员数', '本月任务', '已完成', '工作量(h)', '活跃成员', '年度积分', '月报状态'], ...teams.map(x => [x.name, x.leader, x.members, x.tasks, x.done, x.workload, x.active, x.points, x.status])];
+    }
+    const cell = value => {
+      const text = String(value ?? '');
+      return /[",\n]/.test(text) ? `"${text.replace(/"/g, '""')}"` : text;
+    };
+    const csv = '\ufeff' + rows.map(r => r.map(cell).join(',')).join('\n');
     const url = URL.createObjectURL(new Blob([csv], { type: 'text/csv;charset=utf-8' }));
     const a = document.createElement('a'); a.href = url; a.download = `TEDxZizhuPark_${kind}_2026.csv`; a.click(); URL.revokeObjectURL(url);
+    try { window.localStorage.setItem('tedx-hub-last-export', new Date().toISOString()); } catch { /* ignore */ }
     notify(`${kind}已导出为 CSV 文件`);
   };
 
@@ -490,7 +502,7 @@ function MainApp({ session, onLogout, onSessionUpdate, language, setLanguage }) 
     case 'myPoints': content = <MyPointsPage transactions={transactions} {...shared} />; break;
     case 'pointsManagement': content = <PointsManagement transactions={transactions} setTransactions={setTransactions} {...shared} />; break;
     case 'analytics': content = <AnalyticsPage teams={teams} {...shared} />; break;
-    case 'settings': content = <SettingsPage notify={notify} t={t} isEn={isEn} session={session} role={role} orgSettings={orgSettings} onOrgSettings={setOrgSettings} onSessionUpdate={onSessionUpdate} language={language} />; break;
+    case 'settings': content = <SettingsPage {...shared} session={session} role={role} orgSettings={orgSettings} onOrgSettings={setOrgSettings} onSessionUpdate={onSessionUpdate} language={language} teams={teams} members={members} tasks={tasks} reports={reports} transactions={transactions} />; break;
     default: content = <Dashboard teams={teams} reports={reports} tasks={tasks} greeting={greetingText} greetingSub={greetingSubtitle(language)} {...shared} />;
   }
 
@@ -707,23 +719,123 @@ function AnalyticsPage({ teams, exportCsv, t, isEn, language }) {
   </div>;
 }
 
-function SettingsPage({ notify, t, isEn, session, role, orgSettings, onOrgSettings, onSessionUpdate, language }) {
-  const [toggles, setToggles] = useState({ autoSave: true, leaderboard: true, monthly: true, deadline: true, points: true, review: true });
+const RULE_TYPES = ['基础参与', '任务贡献', '特别贡献', '组织贡献', '社区贡献'];
+const NOTIFICATION_DEFAULTS = {
+  cycleStart: true, deadline: true, submitted: true, approved: true,
+  returned: true, credited: true, adjusted: true, daysBefore: 3,
+};
+const FEATURE_DEFAULTS = { autoSave: true, leaderboard: true };
+const FALLBACK_RULES = [
+  { id: 'rule1', action: '参加正式团队例会', type: '基础参与', points: 2, unit: '每次', enabled: true },
+  { id: 'rule2', action: '参加专项培训', type: '基础参与', points: 2, unit: '每次', enabled: true },
+  { id: 'rule3', action: '完成普通任务', type: '任务贡献', points: 3, unit: '每项', enabled: true },
+  { id: 'rule4', action: '完成重要任务', type: '任务贡献', points: 5, unit: '每项', enabled: true },
+  { id: 'rule5', action: '完成重大项目交付', type: '任务贡献', points: 10, unit: '每项', enabled: true },
+  { id: 'rule6', action: '跨组协作并完成交付', type: '组织贡献', points: 3, unit: '每次', enabled: true },
+  { id: 'rule7', action: '参与活动现场执行', type: '任务贡献', points: 5, unit: '每次', enabled: true },
+  { id: 'rule8', action: '组织一次有效社区活动', type: '社区贡献', points: 5, unit: '每次', enabled: true },
+];
+const POINT_TYPE_CARDS = [
+  ['基础参与', 'Basic Participation', '#6a9b82', '例会、培训等日常参与'],
+  ['任务贡献', 'Task Contribution', '#e62b1e', '以实际交付为依据的任务完成'],
+  ['特别贡献', 'Special Contribution', '#7c3aed', '超出常规职责、需单独审核'],
+  ['组织贡献', 'Organizational', '#f2b84b', '招募、培训与跨组协作'],
+  ['社区贡献', 'Community', '#4d6fb3', '历届成员联络与社区活动'],
+];
+const NOTIF_ITEMS = [
+  ['cycleStart', '填报周期开始', 'Reporting cycle opens', '每月 1 日提醒组长开始填写月报', 'Notify leads on the 1st of each month'],
+  ['deadline', '月报截止提醒', 'Report deadline reminder', '截止前提醒尚未提交的组长', 'Remind leads who have not submitted'],
+  ['submitted', '月报已提交', 'Report submitted', '组长提交后通知管理员审核', 'Notify admins when a report is submitted'],
+  ['approved', '月报审核通过', 'Report approved', '审核通过后通知组长与成员', 'Notify the team when a report is approved'],
+  ['returned', '月报被退回', 'Report returned', '退回时同步具体修改意见', 'Send revision notes when a report is returned'],
+  ['credited', '积分到账', 'Points credited', '积分入账后通知成员', 'Notify members when points are credited'],
+  ['adjusted', '管理员调整积分', 'Manual points adjustment', '手动调整积分时保留通知记录', 'Notify on manual point adjustments'],
+];
+const ROLE_CARDS = [
+  ['admin', '超级管理员', 'Admin', '组织设置、成员与团队、月报审核、积分规则与全部数据', 'Full access to settings, reviews, rules and data', '#e62b1e'],
+  ['leader', '团队组长', 'Team Lead', '本组月报填报、成员参与登记、任务与本组统计', 'Own team reports, participation, tasks and stats', '#4d6fb3'],
+  ['member', '普通成员', 'Member', '个人积分与明细、参与记录、组织公开成果', 'Own points, records and public team results', '#6a9b82'],
+  ['reviewer', '管理人员（可选）', 'Reviewer (optional)', '查看与审核全部月报、查看统计报表，无系统配置权限', 'Review reports and analytics without config access', '#f2b84b'],
+];
+const PERMISSION_MATRIX = [
+  ['查看全部团队数据', 'View all team data', 1, 0, 0, 1],
+  ['填写 / 提交团队月报', 'Fill & submit team reports', 1, 1, 0, 0],
+  ['审核 / 退回月报', 'Approve or return reports', 1, 0, 0, 1],
+  ['登记成员参与情况', 'Record member participation', 1, 1, 0, 0],
+  ['设置积分规则', 'Configure points rules', 1, 0, 0, 0],
+  ['手动调整积分', 'Adjust points manually', 1, 0, 0, 0],
+  ['查看个人积分明细', 'View own points details', 1, 1, 1, 1],
+  ['管理团队与成员', 'Manage teams & members', 1, 0, 0, 0],
+  ['导出全组织数据', 'Export organization data', 1, 0, 0, 1],
+  ['系统设置', 'System settings', 1, 0, 0, 0],
+];
+const EXPORT_KINDS = [
+  ['成员名单', '成员名单', 'Member list'],
+  ['积分流水', '积分流水', 'Points transactions'],
+  ['月度团队报告', '月度团队报告', 'Monthly reports'],
+  ['任务清单', '任务清单', 'Task list'],
+  ['年度团队数据', '年度团队统计', 'Annual team statistics'],
+];
+
+function SettingsPage({ notify, t, isEn, language, session, role, orgSettings, onOrgSettings, onSessionUpdate, exportCsv, teams, members, tasks, reports, transactions }) {
+  const L = (zh, en) => isEn ? en : zh;
+  const isAdmin = role === 'admin';
+  const [tab, setTab] = useState('general');
   const [orgZh, setOrgZh] = useState(orgSettings?.zh || '');
   const [orgEn, setOrgEn] = useState(orgSettings?.en || '');
   const [mine, setMine] = useState(isEn ? (session?.prefs?.greetingEn || '') : (session?.prefs?.greeting || ''));
   const [saving, setSaving] = useState(false);
-  const toggle = key => setToggles(prev => ({ ...prev, [key]: !prev[key] }));
+  const [rules, setRules] = useState(FALLBACK_RULES);
+  const [rulesLoading, setRulesLoading] = useState(true);
+  const [notif, setNotif] = useState(NOTIFICATION_DEFAULTS);
+  const [features, setFeatures] = useState(FEATURE_DEFAULTS);
+  const [accounts, setAccounts] = useState([]);
+  const [settingRows, setSettingRows] = useState(0);
+  const [cloudCheck, setCloudCheck] = useState(null);
+  const [lastExport, setLastExport] = useState('');
+
   useEffect(() => { setOrgZh(orgSettings?.zh || ''); setOrgEn(orgSettings?.en || ''); }, [orgSettings]);
   useEffect(() => { setMine(isEn ? (session?.prefs?.greetingEn || '') : (session?.prefs?.greeting || '')); }, [isEn, session?.prefs?.greeting, session?.prefs?.greetingEn]);
+  useEffect(() => {
+    let alive = true;
+    (async () => {
+      const [ruleRows, notifPrefs, featurePrefs, userRows, settingRowsData] = await Promise.all([
+        fetchTable('points_rules').catch(() => []),
+        fetchAppSetting('notification_prefs', NOTIFICATION_DEFAULTS),
+        fetchAppSetting('feature_prefs', FEATURE_DEFAULTS),
+        fetchTable('users').catch(() => []),
+        fetchTable('app_settings').catch(() => []),
+      ]);
+      if (!alive) return;
+      if (ruleRows.length) setRules(ruleRows);
+      setNotif({ ...NOTIFICATION_DEFAULTS, ...notifPrefs });
+      setFeatures({ ...FEATURE_DEFAULTS, ...featurePrefs });
+      setAccounts(userRows);
+      setSettingRows(settingRowsData.length);
+      setRulesLoading(false);
+    })();
+    return () => { alive = false; };
+  }, []);
+  useEffect(() => {
+    try { setLastExport(window.localStorage.getItem('tedx-hub-last-export') || ''); } catch { /* ignore */ }
+  }, [tab]);
+  useEffect(() => {
+    if (tab !== 'data') return;
+    let alive = true;
+    pingCloud().then(result => { if (alive) setCloudCheck(result); }).catch(() => { if (alive) setCloudCheck({ ok: false, at: new Date() }); });
+    return () => { alive = false; };
+  }, [tab]);
+
   const activeTemplate = (isEn ? (mine || orgEn) : (mine || orgZh)) || '';
   const previewText = renderGreeting({ language, template: activeTemplate, name: session?.prefs?.displayName || session?.name || '' });
+
   const saveGreeting = async () => {
     if (saving) return;
     setSaving(true);
     try {
-      if (role === 'admin') {
+      if (isAdmin) {
         await saveSettings({ zh: orgZh, en: orgEn });
+        await saveAppSetting('feature_prefs', features);
         onOrgSettings({ zh: orgZh, en: orgEn });
       }
       const prefs = await updateMyPrefs(isEn ? { greetingEn: mine } : { greeting: mine });
@@ -735,30 +847,159 @@ function SettingsPage({ notify, t, isEn, session, role, orgSettings, onOrgSettin
       }});
       notify(t('greetingSaved'));
     } catch {
-      notify(isEn ? 'Could not save. Please try again.' : '保存失败，请稍后重试');
+      notify(L('保存失败，请稍后重试', 'Could not save. Please try again.'));
     }
     setSaving(false);
   };
-  return <div className="page settings-page"><PageTitle title={t('settingsTitle')} subtitle={t('settingsSubtitle')} actions={<Button icon={Save} onClick={() => notify(isEn ? 'Settings saved' : '系统设置已保存并立即生效')}>{t('saveChanges')}</Button>} />
-    <div className="settings-layout"><div className="settings-nav"><button className="active"><Settings size={17} />{t('generalSettings')}</button><button><Coins size={17} />{t('pointsRules')}</button><button><Bell size={17} />{t('notificationSettings')}</button><button><ShieldCheck size={17} />{t('rolePermissions')}</button><button><Database size={17} />{t('dataBackup')}</button></div><div className="settings-content">
-      <section className="card settings-section greeting-section"><div className="settings-title"><span><Sparkles size={19} /></span><div><h2>{t('greetingTitle')}</h2><p>{t('greetingSub')}</p></div></div>
-        <div className="greeting-preview"><small>{t('greetingPreview')}</small><strong>{previewText}</strong></div>
-        <div className="form-grid">
-          <Field label={t('greetingOrgZh')} full><input value={orgZh} disabled={role !== 'admin'} onChange={e => setOrgZh(e.target.value)} placeholder="{time}，{name}。" /></Field>
-          <Field label={t('greetingOrgEn')} full><input value={orgEn} disabled={role !== 'admin'} onChange={e => setOrgEn(e.target.value)} placeholder="{time}, {name}." /></Field>
-          <Field label={t('greetingPersonal')} hint={t('greetingPersonalHint')} full><input value={mine} onChange={e => setMine(e.target.value)} placeholder={isEn ? 'Welcome back, {name}!' : '欢迎回来，{name}！'} /></Field>
-        </div>
-        <p className="greeting-hint"><Info size={15} /><span>{t('greetingPlaceholders')} · {t('greetingAutoNote')}</span></p>
-        <div className="greeting-actions"><Button icon={Save} onClick={saveGreeting} disabled={saving}>{saving ? t('signInLoading') : t('greetingSave')}</Button><Button variant="secondary" onClick={() => { setOrgZh(''); setOrgEn(''); setMine(''); }}>{t('greetingReset')}</Button></div>
-      </section>
-      <section className="card settings-section"><div className="settings-title"><span><ShieldCheck size={19} /></span><div><h2>{t('accountTitle')}</h2><p>{t('accountSub')}</p></div></div>
-        <div className="account-info-grid"><div><span>{t('accountEmail')}</span><strong>{session?.email}</strong></div><div><span>{t('accountRole')}</span><strong>{roleLabel(role, isEn)}</strong></div><div><span>{t('accountTeam')}</span><strong>{session?.prefs?.team || '—'}</strong></div></div>
-        <p className="greeting-hint"><Info size={15} /><span>{t('accountProvision')}</span></p>
-      </section>
-      <section className="card settings-section"><div className="settings-title"><span><CalendarDays size={19} /></span><div><h2>年度与组织信息</h2><p>设置当前工作年度和组织基础信息</p></div></div><div className="form-grid"><Field label="组织名称"><input defaultValue="TEDxZizhuPark" /></Field><Field label="当前工作年度"><select defaultValue="2026"><option>2026</option><option>2025</option></select></Field><Field label="月报提交截止日" hint="每月"><select defaultValue="15"><option value="15">15 日 23:59</option><option value="20">20 日 23:59</option></select></Field><Field label="默认时区"><select><option>(GMT+08:00) 北京</option></select></Field></div></section>
-      <section className="card settings-section"><div className="settings-title"><span><SlidersHorizontal size={19} /></span><div><h2>功能偏好</h2><p>根据组织习惯调整平台行为</p></div></div><SettingToggle title="月报自动保存" description="填写过程中自动保存草稿，避免内容丢失" value={toggles.autoSave} onChange={() => toggle('autoSave')} /><SettingToggle title="展示年度积分排行榜" description="允许成员查看年度个人和团队积分榜" value={toggles.leaderboard} onChange={() => toggle('leaderboard')} /></section>
-      <section className="card settings-section"><div className="settings-title"><span><Bell size={19} /></span><div><h2>站内通知</h2><p>选择你希望接收的组织动态</p></div></div><SettingToggle title="填报周期开始提醒" description="每月 1 日向组长发送填报通知" value={toggles.monthly} onChange={() => toggle('monthly')} /><SettingToggle title="月报截止提醒" description="截止前 3 天提醒尚未提交的组长" value={toggles.deadline} onChange={() => toggle('deadline')} /><SettingToggle title="积分到账通知" description="积分审核入账后及时通知成员" value={toggles.points} onChange={() => toggle('points')} /></section>
-    </div></div>
+
+  const updateRule = (id, patch) => setRules(prev => prev.map(r => r.id === id ? { ...r, ...patch } : r));
+  const addRule = () => setRules(prev => [...prev, { id: `rule${Date.now()}`, action: '', type: '任务贡献', points: 3, unit: '每项', enabled: true }]);
+  const deleteRule = id => { removeRow('points_rules', id); setRules(prev => prev.filter(r => r.id !== id)); notify(L('规则已删除，保存后生效', 'Rule removed; save to apply')); };
+  const saveRules = async () => {
+    if (!isAdmin) return notify(L('仅管理员可修改积分规则', 'Only admins can edit points rules'));
+    if (saving) return;
+    if (rules.some(r => !String(r.action || '').trim())) return notify(L('请填写所有规则的行为名称', 'Please fill in every rule name'));
+    setSaving(true);
+    try { await syncTable('points_rules', rules); notify(L('积分规则已保存并同步至云端', 'Points rules saved to cloud')); }
+    catch { notify(L('保存失败，请稍后重试', 'Could not save. Please try again.')); }
+    setSaving(false);
+  };
+  const saveNotif = async () => {
+    if (!isAdmin) return notify(L('仅管理员可修改组织通知设置', 'Only admins can change organization notifications'));
+    if (saving) return;
+    setSaving(true);
+    try { await saveAppSetting('notification_prefs', notif); notify(L('通知设置已保存', 'Notification settings saved')); }
+    catch { notify(L('保存失败，请稍后重试', 'Could not save. Please try again.')); }
+    setSaving(false);
+  };
+  const saveCurrent = () => {
+    if (tab === 'general') saveGreeting();
+    else if (tab === 'points') saveRules();
+    else if (tab === 'notifications') saveNotif();
+    else if (tab === 'roles') notify(L('角色由团队管理组在 Appwrite Auth 中维护', 'Roles are managed in Appwrite Auth by the Team Management Group'));
+    else pingCloud().then(result => { setCloudCheck(result); notify(L('云端连接已刷新', 'Cloud connection refreshed')); }).catch(() => notify(L('云端连接异常，请稍后重试', 'Cloud connection failed, please retry')));
+  };
+  const doExport = kind => { exportCsv(kind); setLastExport(new Date().toISOString()); };
+  const formatTime = iso => {
+    if (!iso) return L('尚无导出记录', 'No exports yet');
+    try { return new Date(iso).toLocaleString(isEn ? 'en-US' : 'zh-CN'); } catch { return iso; }
+  };
+
+  const tabs = [
+    ['general', t('generalSettings'), Settings],
+    ['points', t('pointsRules'), Coins],
+    ['notifications', t('notificationSettings'), Bell],
+    ['roles', t('rolePermissions'), ShieldCheck],
+    ['data', t('dataBackup'), Database],
+  ];
+
+  return <div className="page settings-page">
+    <PageTitle title={t('settingsTitle')} subtitle={t('settingsSubtitle')} actions={<Button icon={Save} onClick={saveCurrent}>{t('saveChanges')}</Button>} />
+    <div className="settings-layout">
+      <div className="settings-nav">{tabs.map(([id, label, Icon]) => <button key={id} className={tab === id ? 'active' : ''} onClick={() => setTab(id)}><Icon size={17} />{label}</button>)}</div>
+      <div className="settings-content">
+
+        {tab === 'general' && <>
+          <section className="card settings-section greeting-section">
+            <div className="settings-title"><span><Sparkles size={19} /></span><div><h2>{t('greetingTitle')}</h2><p>{t('greetingSub')}</p></div></div>
+            <div className="greeting-preview"><small>{t('greetingPreview')}</small><strong>{previewText}</strong></div>
+            <div className="form-grid">
+              <Field label={t('greetingOrgZh')} full><input value={orgZh} disabled={!isAdmin} onChange={e => setOrgZh(e.target.value)} placeholder="{time}，{name}。" /></Field>
+              <Field label={t('greetingOrgEn')} full><input value={orgEn} disabled={!isAdmin} onChange={e => setOrgEn(e.target.value)} placeholder="{time}, {name}." /></Field>
+              <Field label={t('greetingPersonal')} hint={t('greetingPersonalHint')} full><input value={mine} onChange={e => setMine(e.target.value)} placeholder={isEn ? 'Welcome back, {name}!' : '欢迎回来，{name}！'} /></Field>
+            </div>
+            <p className="greeting-hint"><Info size={15} /><span>{t('greetingPlaceholders')} · {t('greetingAutoNote')}</span></p>
+            <div className="greeting-actions"><Button icon={Save} onClick={saveGreeting} disabled={saving}>{saving ? t('signInLoading') : t('greetingSave')}</Button><Button variant="secondary" onClick={() => { setOrgZh(''); setOrgEn(''); setMine(''); }}>{t('greetingReset')}</Button></div>
+          </section>
+          <section className="card settings-section"><div className="settings-title"><span><ShieldCheck size={19} /></span><div><h2>{t('accountTitle')}</h2><p>{t('accountSub')}</p></div></div>
+            <div className="account-info-grid"><div><span>{t('accountEmail')}</span><strong>{session?.email}</strong></div><div><span>{t('accountRole')}</span><strong>{roleLabel(role, isEn)}</strong></div><div><span>{t('accountTeam')}</span><strong>{session?.prefs?.team || '—'}</strong></div></div>
+            <p className="greeting-hint"><Info size={15} /><span>{t('accountProvision')}</span></p>
+          </section>
+          <section className="card settings-section"><div className="settings-title"><span><CalendarDays size={19} /></span><div><h2>{L('年度与组织信息', 'Year & Organization')}</h2><p>{L('设置当前工作年度和组织基础信息', 'Set the working year and organization details')}</p></div></div><div className="form-grid"><Field label={L('组织名称', 'Organization')}><input defaultValue="TEDxZizhuPark" /></Field><Field label={L('当前工作年度', 'Working year')}><select defaultValue="2026"><option>2026</option><option>2025</option></select></Field><Field label={L('月报提交截止日', 'Report deadline')} hint={L('每月', 'Monthly')}><select defaultValue="15"><option value="15">15 日 23:59</option><option value="20">20 日 23:59</option></select></Field><Field label={L('默认时区', 'Timezone')}><select><option>(GMT+08:00) 北京</option></select></Field></div></section>
+          <section className="card settings-section"><div className="settings-title"><span><SlidersHorizontal size={19} /></span><div><h2>{L('功能偏好', 'Feature Preferences')}</h2><p>{L('根据组织习惯调整平台行为', 'Adjust platform behavior to fit your team')}</p></div></div>
+            <SettingToggle title={L('月报自动保存', 'Auto-save reports')} description={L('填写过程中自动保存草稿，避免内容丢失', 'Save drafts while filling reports')} value={features.autoSave} onChange={() => setFeatures(prev => ({ ...prev, autoSave: !prev.autoSave }))} />
+            <SettingToggle title={L('展示年度积分排行榜', 'Show annual leaderboard')} description={L('允许成员查看年度个人和团队积分榜', 'Let members see annual individual and team rankings')} value={features.leaderboard} onChange={() => setFeatures(prev => ({ ...prev, leaderboard: !prev.leaderboard }))} />
+          </section>
+        </>}
+
+        {tab === 'points' && <>
+          <section className="card settings-section"><div className="settings-title"><span><Coins size={19} /></span><div><h2>{L('积分规则', 'Points Rules')}</h2><p>{L('用于月报建议积分的自动计算；修改仅影响之后的记录，不追溯历史积分', 'Used to calculate suggested points; changes apply only to future records')}</p></div></div>
+            <div className="rules-toolbar"><span>{L(`已启用 ${rules.filter(r => r.enabled).length} / ${rules.length} 条规则`, `${rules.filter(r => r.enabled).length} of ${rules.length} rules enabled`)}</span><div className="greeting-actions"><Button variant="secondary" icon={Plus} onClick={addRule} disabled={!isAdmin}>{L('新增规则', 'Add rule')}</Button><Button icon={Save} onClick={saveRules} disabled={saving || !isAdmin}>{L('保存规则', 'Save rules')}</Button></div></div>
+            <div className="table-wrap"><table className="data-table rules-table"><thead><tr><th>{L('贡献行为', 'Contribution')}</th><th>{L('积分类型', 'Type')}</th><th>{L('默认积分', 'Points')}</th><th>{L('计分单位', 'Unit')}</th><th>{L('启用', 'Enabled')}</th><th /></tr></thead><tbody>
+              {rules.map(r => <tr key={r.id}>
+                <td><input className="rule-input" value={r.action || ''} disabled={!isAdmin} placeholder={L('行为名称', 'Action name')} onChange={e => updateRule(r.id, { action: e.target.value })} /></td>
+                <td><select className="rule-input" value={r.type || '任务贡献'} disabled={!isAdmin} onChange={e => updateRule(r.id, { type: e.target.value })}>{RULE_TYPES.map(x => <option key={x}>{x}</option>)}</select></td>
+                <td><input className="rule-input rule-points" type="number" min="0" value={r.points ?? 0} disabled={!isAdmin} onChange={e => updateRule(r.id, { points: Number(e.target.value) })} /></td>
+                <td><input className="rule-input" value={r.unit || ''} disabled={!isAdmin} onChange={e => updateRule(r.id, { unit: e.target.value })} /></td>
+                <td><button className={`toggle ${r.enabled ? 'on' : ''}`} onClick={() => isAdmin && updateRule(r.id, { enabled: !r.enabled })}><i /></button></td>
+                <td><button className="icon-button" disabled={!isAdmin} onClick={() => deleteRule(r.id)}><Trash2 size={15} /></button></td>
+              </tr>)}
+            </tbody></table></div>
+            {rulesLoading && <p className="muted small-note">{L('正在读取云端规则…', 'Loading rules from cloud…')}</p>}
+            <p className="greeting-hint"><Info size={15} /><span>{L('同一事项不得重复计分；任务积分以实际交付为依据；特别贡献积分必须经团队管理组审核。', 'No double counting; task points require delivery; special contributions need admin review.')}</span></p>
+          </section>
+          <section className="card settings-section"><div className="settings-title"><span><Award size={19} /></span><div><h2>{L('积分类型构成', 'Points Composition')}</h2><p>{L('基础参与 + 任务贡献 + 特别贡献 + 组织贡献 + 社区贡献', 'Five contribution categories')}</p></div></div>
+            <div className="points-type-grid">{POINT_TYPE_CARDS.map(([zh, en, color, desc]) => <div key={zh}><i style={{ background: color }} /><div><strong>{isEn ? en : zh}</strong><p>{desc}</p></div></div>)}</div>
+          </section>
+        </>}
+
+        {tab === 'notifications' && <>
+          <section className="card settings-section"><div className="settings-title"><span><Bell size={19} /></span><div><h2>{L('站内通知', 'In-app Notifications')}</h2><p>{L('选择组织内哪些动态需要触发通知', 'Choose which events trigger notifications')}</p></div></div>
+            {NOTIF_ITEMS.map(([key, zh, en, descZh, descEn]) => <SettingToggle key={key} title={L(zh, en)} description={L(descZh, descEn)} value={!!notif[key]} onChange={() => setNotif(prev => ({ ...prev, [key]: !prev[key] }))} />)}
+            <div className="notif-extra"><Field label={L('月报截止提醒提前天数', 'Deadline reminder lead time')}><select value={notif.daysBefore} onChange={e => setNotif(prev => ({ ...prev, daysBefore: Number(e.target.value) }))}>{[1, 3, 5, 7].map(d => <option key={d} value={d}>{d} {L('天', 'days')}</option>)}</select></Field></div>
+            <div className="greeting-actions"><Button icon={Save} onClick={saveNotif} disabled={saving}>{L('保存通知设置', 'Save notification settings')}</Button></div>
+          </section>
+          <section className="card settings-section"><div className="settings-title"><span><Send size={19} /></span><div><h2>{L('通知渠道', 'Delivery Channels')}</h2><p>{L('V1.0 使用站内通知，后续可扩展', 'In-app notifications in V1.0, more channels later')}</p></div></div>
+            <SettingToggle title={L('站内通知', 'In-app notifications')} description={L('登录后可在右上角查看全部通知', 'Available from the top-right bell menu')} value={true} onChange={() => notify(L('站内通知为 V1.0 默认渠道，不可关闭', 'In-app notifications are always on in V1.0'))} />
+            <SettingToggle title={L('飞书 / 企业微信推送', 'Feishu / WeCom push')} description={L('P1 阶段接入，当前未启用', 'Planned for P1; currently unavailable')} value={false} onChange={() => notify(L('该渠道将在 P1 阶段开放', 'This channel will be available in P1'))} />
+          </section>
+          <section className="card settings-section"><div className="settings-title"><span><Clock3 size={19} /></span><div><h2>{L('最近通知示例', 'Recent Notifications')}</h2><p>{L('通知触发后的展示样式', 'Preview of notification cards')}</p></div></div>
+            <div className="notif-preview">{(isEn ? [
+              ['Report pending review', 'Brand Team submitted the November report', '10 min ago'],
+              ['Points credited', 'You earned +5 task contribution points', 'Yesterday 18:32'],
+              ['Reporting reminder', 'November reports are due in 6 days', 'Yesterday 09:00'],
+            ] : [
+              ['月报待审核', '品牌传播组已提交 11 月月报', '10 分钟前'],
+              ['积分已到账', '你获得任务贡献积分 +5', '昨天 18:32'],
+              ['填报提醒', '11 月月报将在 6 天后截止', '昨天 09:00'],
+            ]).map(([title, detail, time], i) => <div key={i}><span><Bell size={15} /></span><div><strong>{title}</strong><p>{detail}</p></div><small>{time}</small></div>)}</div>
+          </section>
+        </>}
+
+        {tab === 'roles' && <>
+          <section className="card settings-section"><div className="settings-title"><span><ShieldCheck size={19} /></span><div><h2>{L('角色定义', 'Role Definitions')}</h2><p>{L('基于角色的权限管理（RBAC），登录后按角色自动显示可用菜单', 'Role-based access control: menus adapt to the signed-in role')}</p></div></div>
+            <div className="role-cards">{ROLE_CARDS.map(([key, zh, en, descZh, descEn, color]) => <div key={key} className={role === key ? 'current' : ''}><span style={{ background: color }}>{key === 'admin' ? <ShieldCheck size={17} /> : key === 'leader' ? <Users size={17} /> : key === 'member' ? <UserRound size={17} /> : <Eye size={17} />}</span><div><strong>{L(zh, en)}{role === key && <em>{L('当前', 'You')}</em>}</strong><p>{L(descZh, descEn)}</p></div></div>)}</div>
+          </section>
+          <section className="card settings-section"><div className="settings-title"><span><List size={19} /></span><div><h2>{L('权限矩阵', 'Permission Matrix')}</h2><p>{L('按 PRD 的 RBAC 定义，只读展示', 'Read-only matrix based on the PRD')}</p></div></div>
+            <div className="table-wrap"><table className="data-table matrix-table"><thead><tr><th>{L('功能', 'Capability')}</th><th>{L('管理员', 'Admin')}</th><th>{L('组长', 'Lead')}</th><th>{L('成员', 'Member')}</th><th>{L('审核员', 'Reviewer')}</th></tr></thead><tbody>{PERMISSION_MATRIX.map(([zh, en, a, l, m, r]) => <tr key={zh}><td><strong>{L(zh, en)}</strong></td>{[a, l, m, r].map((v, i) => <td key={i}>{v ? <span className="matrix-yes"><Check size={15} /></span> : <span className="matrix-no">—</span>}</td>)}</tr>)}</tbody></table></div>
+          </section>
+          <section className="card settings-section"><div className="settings-title"><span><Users size={19} /></span><div><h2>{L('已开通账号', 'Provisioned Accounts')}</h2><p>{L('来自 Appwrite Auth 的账号档案', 'Accounts from the Appwrite directory')}</p></div></div>
+            <div className="account-list">{accounts.length ? accounts.map(a => <div key={a.id}><Avatar name={a.name || a.email} size="sm" /><div><strong>{a.name || '—'}</strong><small>{a.email}</small></div><span className="role-tag">{a.role === 'admin' ? L('超级管理员', 'Admin') : a.role === 'leader' ? L('团队组长', 'Team Lead') : L('普通成员', 'Member')}</span><StatusBadge tone={a.status === 'active' ? 'green' : 'gray'} dot={false}>{a.status === 'active' ? L('正常', 'Active') : a.status || '—'}</StatusBadge></div>) : <p className="muted small-note">{L('暂无账号数据', 'No accounts found')}</p>}</div>
+            <p className="greeting-hint"><Info size={15} /><span>{L('角色存放于 Appwrite Auth 的账号偏好中，由团队管理组统一维护；此处仅作查看，避免前端越权修改。', 'Roles live in Appwrite Auth preferences and are maintained by the Team Management Group; this page is read-only by design.')}</span></p>
+          </section>
+        </>}
+
+        {tab === 'data' && <>
+          <section className="card settings-section"><div className="settings-title"><span><Database size={19} /></span><div><h2>{L('云端连接', 'Cloud Connection')}</h2><p>{L('前端通过区域端点直接连接 Appwrite TablesDB', 'The frontend connects to Appwrite TablesDB via the regional endpoint')}</p></div></div>
+            <div className="cloud-status-grid"><div><span>{L('服务端点', 'Endpoint')}</span><strong>{APPWRITE_ENDPOINT}</strong></div><div><span>Project ID</span><strong>{APPWRITE_PROJECT}</strong></div><div><span>{L('数据库', 'Database')}</span><strong>{DB}</strong></div><div><span>{L('区域', 'Region')}</span><strong>sgp · Singapore</strong></div></div>
+            <div className="cloud-check"><StatusBadge tone={cloudCheck?.ok ? 'green' : 'gray'} dot={false}>{cloudCheck?.ok ? L('连接正常', 'Connected') : L('检测中', 'Checking')}</StatusBadge><span>{cloudCheck?.at ? formatTime(cloudCheck.at.toISOString()) : '—'}</span><Button variant="secondary" icon={Activity} onClick={() => pingCloud().then(setCloudCheck).catch(() => setCloudCheck({ ok: false, at: new Date() }))}>{L('重新检测', 'Recheck')}</Button></div>
+          </section>
+          <section className="card settings-section"><div className="settings-title"><span><FileSpreadsheet size={19} /></span><div><h2>{L('数据表概览', 'Data Tables')}</h2><p>{L('当前工作区加载的记录数（共 13 张表）', 'Loaded records across the workspace (13 tables total)')}</p></div></div>
+            <div className="table-count-grid">{[
+              ['teams', L('团队', 'Teams'), teams.length], ['members', L('成员', 'Members'), members.length],
+              ['tasks', L('任务', 'Tasks'), tasks.length], ['reports', L('月度报告', 'Reports'), reports.length],
+              ['points_transactions', L('积分流水', 'Transactions'), transactions.length], ['points_rules', L('积分规则', 'Rules'), rules.length],
+              ['users', L('登录账号', 'Accounts'), accounts.length], ['app_settings', L('系统配置', 'Settings'), settingRows],
+            ].map(([id, label, num]) => <div key={id}><span>{label}</span><strong>{num}</strong><small>{id}</small></div>)}</div>
+          </section>
+          <section className="card settings-section"><div className="settings-title"><span><Download size={19} /></span><div><h2>{L('数据导出与备份', 'Export & Backup')}</h2><p>{L('导出 CSV 留档；云端数据由 Appwrite 持续保存', 'Export CSV snapshots; cloud data is persisted by Appwrite')}</p></div></div>
+            <div className="export-grid">{EXPORT_KINDS.map(([kind, zh, en]) => <Button key={kind} variant="secondary" icon={Download} onClick={() => doExport(kind)}>{L(zh, en)}</Button>)}</div>
+            <p className="greeting-hint"><Info size={15} /><span>{L('最近导出：', 'Last export: ')}{formatTime(lastExport)}{L('。建议每月导出一次用于离线备份；积分流水与审核记录不可删除。', ' Export monthly for offline backup; points and review records are immutable.')}</span></p>
+          </section>
+        </>}
+
+      </div>
+    </div>
   </div>;
 }
 
@@ -804,7 +1045,7 @@ function ReportEditor({ report, teams, onClose, onSave }) {
       {step === 1 && <><div className="editor-section-title"><span>01</span><div><h2>团队整体工作情况</h2><p>简要记录团队本月最重要的工作与下一步计划。</p></div></div><div className="form-grid"><Field label="所属月份"><input value="2026 年 11 月" disabled /></Field><Field label="所属团队"><select value={form.team} onChange={e => update('team', e.target.value)}>{teams.map(t => <option key={t.id}>{t.name}</option>)}</select></Field><Field label="本月工作总结" required full><textarea rows="4" value={form.summary} onChange={e => update('summary', e.target.value)} placeholder="概述本月团队的主要工作、成果和进展…" /><span className="word-count">{form.summary.length} / 1000</span></Field><Field label="本月核心目标" required full><textarea rows="3" value={form.goal} onChange={e => update('goal', e.target.value)} placeholder="本月最重要的目标是什么？完成情况如何？" /></Field><Field label="本月未完成事项" full><textarea rows="3" value={form.unfinished} onChange={e => update('unfinished', e.target.value)} placeholder="如有未完成事项，请说明原因与当前状态（选填）" /></Field><Field label="下月工作计划" required full><textarea rows="3" value={form.next} onChange={e => update('next', e.target.value)} placeholder="列出下月最重要的工作计划…" /></Field><Field label="需要其他团队支持的事项" full><textarea rows="2" value={form.support} onChange={e => update('support', e.target.value)} placeholder="明确需要的支持与协作团队（选填）" /></Field></div></>}
       {step === 2 && <><div className="editor-section-title"><span>02</span><div><h2>团队任务清单</h2><p>已自动汇总本月团队任务，可继续补充任务与交付成果。</p></div></div><div className="editor-task-summary"><div><strong>18</strong><span>本月任务</span></div><div><strong>15</strong><span>已完成</span></div><div><strong>126h</strong><span>累计工作量</span></div><Button variant="secondary" icon={Plus}>添加任务</Button></div><div className="editor-task-list">{initialTasks.slice(0, 4).map((t, i) => <div key={t.id}><span className={`task-check ${i < 2 ? 'checked' : ''}`}>{i < 2 && <Check size={13} />}</span><div><strong>{t.title}</strong><p>{t.type} · {t.owner} 负责 · {t.due} 截止</p></div><StatusBadge>{i < 2 ? '已完成' : '进行中'}</StatusBadge><button className="icon-button"><Pencil size={16} /></button></div>)}</div></>}
       {step === 3 && <><div className="editor-section-title"><span>03</span><div><h2>组员月度参与情况</h2><p>登记每位成员的实际参与，不建议单纯按工作时长计分。</p></div></div><div className="batch-actions"><span>已登记 5 / 5 位成员</span><Button variant="secondary" onClick={() => setRecords(prev => prev.map(r => ({ ...r, status: '正常' })))}>批量设为正常参与</Button></div><div className="editor-member-table"><div className="editor-member-head"><span>成员</span><span>参与状态</span><span>参与活动次数</span><span>建议积分</span><span>是否需要跟进</span></div>{records.map((r, i) => <div className="editor-member-row" key={r.name}><div><Avatar name={r.name} size="sm" /><strong>{r.name}</strong></div><select value={r.status} onChange={e => setRecords(prev => prev.map((x, j) => j === i ? { ...x, status: e.target.value } : x))}><option>活跃</option><option>正常</option><option>低频</option><option>暂未参与</option></select><input type="number" defaultValue={i + 1} min="0" /><div className="suggested-points"><input type="number" value={r.points} onChange={e => setRecords(prev => prev.map((x, j) => j === i ? { ...x, points: Number(e.target.value) } : x))} /><span>分</span><button title="查看积分计算明细"><Info size={14} /></button></div><button className={`toggle ${i === 4 ? 'on' : ''}`}><i /></button></div>)}</div><div className="points-calculation-note"><Info size={16} /><span>建议积分由任务记录和当前积分规则自动计算。组长可提出调整建议，最终积分以管理员审核结果为准。</span></div></>}
-      {step === 4 && <><div className="editor-section-title"><span>04</span><div><h2>团队总结与协作评价</h2><p>记录数据之外，那些同样重要的团队故事。</p></div></div><div className="form-grid"><Field label="本月团队最重要的成果" required full><textarea rows="3" defaultValue={form.summary} placeholder="本月最值得记录的团队成果…" /></Field><Field label="最值得肯定的成员及原因" full><textarea rows="3" placeholder="认可具体的人与具体的贡献…" /></Field><Field label="本月跨组合作情况" full><textarea rows="3" placeholder="记录与其他团队协作的事项与成果…" /></Field><Field label="对核心管理团队的建议" full><textarea rows="3" placeholder="有哪些支持能让团队更好地工作？（选填）" /></Field></div><div className="submit-checklist"><h3><CircleCheck size={18} />提交前检查</h3><div><Check size={15} />团队工作总结已填写</div><div><Check size={15} />本月任务与成果已关联</div><div><Check size={15} />全部成员参与情况已登记</div><div><Check size={15} />建议积分已确认</div></div></>}
+      {step === 4 && <><div className="editor-section-title"><span>04</span><div><h2>团队总结与协作评价</h2><p>记录数据之外，那些同样重要的团队故事。</p></div></div><div className="form-grid"><Field label="本月团队最重要的成果" required full><textarea rows="3" defaultValue={form.summary} placeholder="本月最值得记录的团队成果…" /></Field><Field label="最值得肯定的成员及原因" full><textarea rows="3" placeholder="认可具体的人与具体的贡献…" /></Field><Field label="本月跨组合作情况" full><textarea rows="3" placeholder="记录与其他团队协作的事项与成果…" /></Field><Field label="对团队管理组的建议" full><textarea rows="3" placeholder="有哪些支持能让团队更好地工作？（选填）" /></Field></div><div className="submit-checklist"><h3><CircleCheck size={18} />提交前检查</h3><div><Check size={15} />团队工作总结已填写</div><div><Check size={15} />本月任务与成果已关联</div><div><Check size={15} />全部成员参与情况已登记</div><div><Check size={15} />建议积分已确认</div></div></>}
     </div></div>
   </Modal>;
 }

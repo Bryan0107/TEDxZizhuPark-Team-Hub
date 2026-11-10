@@ -16,6 +16,13 @@ const TABLE_COLUMNS = {
   tasks: ['title', 'project', 'team', 'owner', 'collaborators', 'due', 'priority', 'type', 'status', 'importance', 'start', 'month', 'deliverable', 'link', 'note', 'progress', 'hours', 'year'],
   points_transactions: ['txid', 'member', 'team', 'type', 'source', 'date', 'status', 'reason', 'rule_id', 'report_id', 'points', 'year', 'month'],
   app_settings: ['key', 'value_zh', 'value_en'],
+  points_rules: ['action', 'type', 'unit', 'scope', 'points', 'enabled'],
+  users: ['email', 'name', 'role', 'avatar', 'status'],
+  team_members: ['member_id', 'team_id', 'is_primary', 'role'],
+  task_members: ['task_id', 'member'],
+  monthly_member_records: ['report_id', 'member', 'participation', 'contributions', 'personal_note', 'evaluation', 'extra', 'task_count', 'event_count', 'suggested_points', 'follow_up'],
+  report_reviews: ['report_id', 'reviewer', 'action', 'comment', 'created'],
+  audit_logs: ['actor', 'action', 'target', 'detail', 'created'],
 };
 
 // 前端表单字段 → 数据库列的映射。
@@ -124,4 +131,37 @@ export async function saveSettings(values) {
     value_en: values.en || '',
   });
   return values;
+}
+
+// 通用键值配置：通知偏好、功能偏好等以小型 JSON 存放。
+export async function fetchAppSetting(key, fallback = {}) {
+  try {
+    const rows = await fetchTable('app_settings');
+    const row = rows.find(r => r.key === key);
+    if (!row?.value_zh) return fallback;
+    return { ...fallback, ...JSON.parse(row.value_zh) };
+  } catch {
+    return fallback;
+  }
+}
+
+export async function saveAppSetting(key, value) {
+  await upsertItem('app_settings', {
+    id: key,
+    key,
+    value_zh: JSON.stringify(value),
+    value_en: '',
+  });
+  return value;
+}
+
+// 用于「数据与备份」页的连通性自检。
+export async function pingCloud() {
+  const res = await tables.listRows({ databaseId: DB, tableId: 'app_settings', queries: [] });
+  return { ok: true, rows: res.total ?? (res.rows || []).length, at: new Date() };
+}
+
+export async function countTable(table) {
+  const rows = await fetchTable(table);
+  return rows.length;
 }
