@@ -510,8 +510,7 @@ function MainApp({ session, onLogout, onSessionUpdate, language, setLanguage }) 
     {sidebarOpen && <div className="sidebar-scrim" onClick={() => setSidebarOpen(false)} />}
     <aside className={`sidebar ${sidebarOpen ? 'open' : ''}`}>
       <div className="brand" onClick={() => navigate('dashboard')}>
-        <img className="brand-logo" src="/assets/logo-black.png" alt="TEDxZizhuPark" />
-        <div className="brand-hub">TEAM HUB</div>
+        <img className="brand-lockup" src="/assets/brand-lockup.svg" alt="TEDxZizhuPark Team Hub" />
       </div>
       <button className="year-switch"><CalendarDays size={16} /><span>{t('year2026')}</span><ChevronDown size={14} /></button>
       <nav className="side-nav">

@@ -15,7 +15,8 @@ tedxzizhupark/
 │   ├── data.js           演示种子数据（云端为空时用于初始化）
 │   ├── styles.css        设计系统 + 字号放大覆盖 + 登录页样式
 │   └── main.jsx          React 挂载
-├── public/assets/        官方黑白 Logo
+├── public/assets/        官方黑白 Logo、侧边栏品牌锁定组合 SVG 与原始海报源文件
+│                        （logo-black.png / logo-white.png / brand-lockup.svg / brand-carousel-source.svg）
 ├── docs/PRD.md           产品需求文档 V1.0（与第一轮 PRD 一致）
 ├── docs/OPERATIONS.md    本手册
 └── README.md             项目说明
