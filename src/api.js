@@ -23,6 +23,7 @@ const TABLE_COLUMNS = {
   monthly_member_records: ['report_id', 'member', 'participation', 'contributions', 'personal_note', 'evaluation', 'extra', 'task_count', 'event_count', 'suggested_points', 'follow_up'],
   report_reviews: ['report_id', 'reviewer', 'action', 'comment', 'created'],
   audit_logs: ['actor', 'action', 'target', 'detail', 'created'],
+  reserve_volunteers: ['name', 'english', 'email', 'phone', 'previous_team', 'years', 'availability', 'skills', 'note', 'created'],
 };
 
 // 前端表单字段 → 数据库列的映射。
@@ -66,6 +67,8 @@ const encodeRow = (table, item, rowId) => {
   Object.entries(item || {}).forEach(([key, value]) => {
     const column = aliases[key] || key;
     if (!allowed.includes(column) || value === undefined || value === null) return;
+    // 邮箱格式列不接受空字符串；留空时省略该字段，使用列默认值。
+    if (column === 'email' && typeof value === 'string' && !value.trim()) return;
     if (column === 'details' && aliases[key]) {
       // 多个长文本字段合并成一个 details JSON，避免列数超过免费档限制。
       let existing = {};

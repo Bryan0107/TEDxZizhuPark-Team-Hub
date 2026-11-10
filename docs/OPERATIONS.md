@@ -39,7 +39,7 @@ tedxzizhupark/
 
 | 连接器 | 用途 | 快速验证 |
 |---|---|---|
-| Appwrite（OAuth Console） | 建表、账号、平台、数据查询 | `appwrite_get_context` 返回项目 `status: active`；`tables_db_list_tables` 返回 13 张表 |
+| Appwrite（OAuth Console） | 建表、账号、平台、数据查询 | `appwrite_get_context` 返回项目 `status: active`；`tables_db_list_tables` 返回 14 张表 |
 | Vercel | 部署、环境变量、域名、日志 | `get_project` / `list_deployments` 返回项目与 READY 部署 |
 | GitHub | 读取 PRD、提交与发布 | `get_file_contents` 可读取 `docs/PRD.md` |
 
@@ -52,7 +52,7 @@ tedxzizhupark/
 | Project ID | `6af1211f00086491c07c` |
 | 区域 / 端点 | `sgp` → `https://sgp.cloud.appwrite.io/v1` |
 | 数据库 | `tedx_team_hub` |
-| 表（13） | `teams`、`members`、`team_members`、`users`、`tasks`、`task_members`、`reports`、`monthly_member_records`、`points_rules`、`points_transactions`、`report_reviews`、`audit_logs`、`app_settings` |
+| 表（14） | `teams`、`members`、`team_members`、`users`、`tasks`、`task_members`、`reports`、`monthly_member_records`、`points_rules`、`points_transactions`、`report_reviews`、`audit_logs`、`app_settings`、`reserve_volunteers` |
 | Web 平台 | `localhost`、`127.0.0.1`、`*.vercel.app`（免费档上限 3 个） |
 | 认证 | Appwrite Auth（email / password），角色存于 user prefs |
 
@@ -80,9 +80,9 @@ tedxzizhupark/
 | 积分规则 | 8 条默认规则，可编辑行为/类型/分值/单位/启停、新增与删除，管理员保存 | `points_rules` 表 |
 | 通知设置 | 7 类通知场景开关、截止提醒提前天数、渠道状态 | `app_settings`：`notification_prefs`（JSON） |
 | 角色与权限 | 角色定义、权限矩阵、已开通账号清单（只读） | 角色在 Auth prefs；账号清单读 `users` 表 |
-| 数据与备份 | 云端连接自检、8 张主要表记录数、5 类 CSV 导出、最近导出时间 | 实时读取云端；导出时间存浏览器 localStorage |
+| 数据与备份 | 云端连接自检、9 张主要表记录数、6 类 CSV 导出、最近导出时间 | 实时读取云端；导出时间存浏览器 localStorage |
 
-CSV 导出支持：成员名单、积分流水、月度团队报告、任务清单、年度团队统计；单元格已做逗号/引号转义。
+CSV 导出支持：成员名单、积分流水、月度团队报告、任务清单、年度团队统计、后备现场志愿者名录；单元格已做逗号/引号转义。
 
 ## 5. 前端环境变量（Vercel）
 
@@ -100,3 +100,17 @@ CSV 导出支持：成员名单、积分流水、月度团队报告、任务清�
 3. **数据真实性**：部分统计卡片 / 趋势图仍为演示数值，未全部由云端聚合。
 4. **PRD 未完成项**：月报版本历史、成员异议流程、审计日志落库、飞书通知、个人年度贡献报告导出。
 5. **并发**：数据层采用增量 upsert、不删除云端其他行，但同一条记录被多人同时编辑时仍是「后写覆盖」，正式版需要版本字段或事务。
+
+## 7. 组织编制与后备现场志愿者（2026-11-10 调整）
+
+- 组织当前只有 **4 个职能组**：`团队组`、`媒体组`、`内容组`、`伙伴关系组`。旧 8 个组及其成员、任务、月报、积分流水、归属关系已全部清空重建，业务数据从零开始。
+- **后备现场志愿者**：独立表 `reserve_volunteers`，字段 `name` / `english` / `email` / `phone` / `previous_team` / `years` / `availability` / `skills` / `note` / `created`。成员管理页提供「在编策展成员 / 后备现场志愿者」分区切换，支持搜索、筛选、添加、移除与 CSV 导出。该库与在编成员表分离，**不计入**本年度活跃成员、团队编制与积分排名，仅作现场支援储备。
+- `email` 列是邮箱格式，空字符串会被 Appwrite 拒绝；`src/api.js` 的 `encodeRow` 已统一跳过空邮箱字段。
+
+## 8. 缓存与数据一致性
+
+- 浏览器缓存键已版本化为 `tedx-hub-v2-*`（`usePersistentState` / `useCloudState`）。清空重建数据后不会再读到旧缓存。
+- `useCloudState` 只有**云端读取成功**才启用写回（`syncEnabled`）；离线或请求失败时保留本地缓存但**禁止回写**，避免陈旧数据污染云端。
+- 云端表为空且本地种子为空数组时，前端会用空数组覆盖本地缓存；只有定义了非空种子时才会播种。
+- 统计卡片、月报进度、团队汇总、排行榜、积分构成等已改为基于云端数据实时计算；每组 `tasks=0` 时完成率显示 0% 而非 NaN。
+
