@@ -4,35 +4,64 @@ TEDx 紫竹年度团队运营、成员贡献记录及内部积分管理平台（
 
 ## 功能概览
 
+- **登录与权限**：Appwrite Auth 邮箱密码登录、三种角色（管理员 / 组长 / 成员）按权限显示菜单、退出登录
 - **年度管理驾驶舱**：组织运行指标、团队工作概览、月报提交进度、趋势图表、年度贡献榜
-- **月度报告**：组长四步填报（团队总结 → 任务清单 → 成员参与登记 → 提交），管理员审核通过/退回，通过后积分自动入账
+- **个性化问候语**：登录首页按时段 + 账号姓名自动问候，支持组织级和个人级自定义模板（`{name}` / `{time}`），中英文分别配置
+- **月度报告**：组长四步填报、管理员审核通过/退回，通过后积分入账
 - **任务管理**：任务创建、状态流转（列表 / 看板双视图）、多人协作、进度跟踪
 - **成员与团队管理**：统一成员档案、多团队归属、历届成员保留
-- **积分体系**：积分规则配置、自动建议积分、流水追溯、管理员调整、排行榜
+- **积分体系**：积分规则配置、建议积分、流水追溯、管理员调整、排行榜
 - **数据分析**：团队贡献对比、积分分布、年度组织摘要、CSV 导出
-- **多语言**：右上角一键切换 中文 / English（本地持久化）
-- **品牌视觉**：官方 TEDxZizhuPark 黑白 Logo，TEDx 红强调色
+- **多语言**：右上角或登录页一键切换 中文 / English（本地持久化）
+- **品牌视觉**：官方 TEDxZizhuPark 黑白 Logo、TEDx 红强调色；默认字号已整体放大
 
 ## 技术栈
 
-React 19 · Vite 8 · Recharts · lucide-react
+React 19 · Vite 8 · Recharts · lucide-react · Appwrite Cloud（TablesDB + Auth，区域 `sgp`）· Vercel
 
 ## 本地运行
 
 ```bash
 npm install
-npm run dev      # 开发预览 http://localhost:5173
+npm run dev      # http://localhost:5173
 npm run build    # 生产构建
 npm run preview  # 预览构建产物
 ```
 
+可选环境变量（写入 `.env.local`，已被 `.gitignore` 忽略）：
+
+```bash
+VITE_APPWRITE_ENDPOINT=https://sgp.cloud.appwrite.io/v1
+VITE_APPWRITE_PROJECT_ID=6af1211f00086491c07c
+```
+
+代码内置默认值，不配置也能运行。**注意**：项目位于 Appwrite Cloud 新加坡区域，必须使用 `sgp.cloud.appwrite.io` 区域端点；全局端点 `cloud.appwrite.io` 会返回 401。
+
+## 数据与部署
+
+| 层 | 服务 | 说明 |
+|---|---|---|
+| 前端 | Vercel | https://tedxzizhupark-team-hub.vercel.app |
+| 后端 | Appwrite Cloud | TablesDB 13 张表 + Auth 账号；已注册 Web 平台 localhost / 127.0.0.1 / `*.vercel.app` |
+| 代码 | GitHub | https://github.com/Bryan0107/TEDxZizhuPark-Team-Hub |
+
+每次工作完成后的标准流程：**提交并 push 到 GitHub `main` → Vercel 自动构建部署 → 后端结构变更通过 Appwrite MCP 直接生效**。详见 [docs/OPERATIONS.md](docs/OPERATIONS.md)。
+
+> 测试账号由管理员在 Appwrite Auth 中开通，密码不在本仓库公开存放。新账号无需额外配置，登录后自动显示其姓名与对应角色可访问的页面。
+
 ## 文档
 
 - [产品需求文档（PRD V1.0）](docs/PRD.md)
+- [生产模式与运维手册](docs/OPERATIONS.md)
 
-## 说明
+## 当前状态与已知限制
 
-当前版本为可交互前端原型：使用浏览器本地持久化的模拟数据，覆盖 PRD 中的 P0 核心流程（月报填报与审核、积分入账、任务流转、CSV 导出、角色视角切换）。后续将接入真实账户体系与关系型数据库。
+V1.0 为可交付验收的原型：核心业务流程、云数据库读写、真实登录与角色菜单均已打通。生产化前仍需完善：
+
+1. 数据表目前使用 `read/create/update/delete("any")` 权限，登录仅做前端门禁，尚未实现服务端行级权限隔离。
+2. 部分统计卡片与趋势图仍使用演示数值，未全部改为云数据库聚合结果。
+3. 审计日志、月报版本历史、成员异议流程、飞书通知尚未接入。
+4. Appwrite Cloud 非自定义域名场景使用 localStorage 会话回退，正式上线建议绑定自定义 API 域名。
 
 ---
 

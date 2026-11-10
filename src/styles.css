@@ -54,9 +54,299 @@
 .language-menu button svg{color:var(--red);flex:none}
 
 /* Responsive */
+/* ==== FONT BOOST START ==== */
+/* 默认字号整体放大：小字 +2px，标题 +1px（保留响应式覆盖） */
+.brand-tedx{font-size:30px}
+.brand-name{font-size:18px}
+.brand-hub{font-size:11px}
+.year-switch{font-size:14px}
+.nav-label{font-size:12px}
+.nav-item{font-size:15px}
+.nav-item em{font-size:12px}
+.side-help strong{font-size:13px}
+.side-help p{font-size:11px}
+.profile strong{font-size:14px}
+.profile span{font-size:12px}
+.profile-menu-title{font-size:12px}
+.profile-menu button{font-size:14px}
+.topbar-left{font-size:14px}
+.global-search input{font-size:13px}
+.global-search kbd{font-size:11px}
+.search-results button>span{font-size:11px}
+.search-results strong{font-size:14px}
+.search-results small{font-size:12px}
+.search-empty{font-size:14px}
+.notifications-title{font-size:15px}
+.notifications-title button{font-size:13px}
+.notification-item strong{font-size:14px}
+.notification-item p{font-size:13px}
+.notification-item small{font-size:11px}
+.all-notifications{font-size:13px}
+.button{font-size:14px}
+.app-footer{font-size:11px}
+.page-title-row h1{font-size:26px}
+.page-title-row p{font-size:14px}
+.select-button{font-size:13px}
+.card-header h2{font-size:15px}
+.card-header p{font-size:12px}
+.text-button{font-size:12px}
+.metric-top{font-size:13px}
+.metric-value{font-size:30px}
+.metric-value small{font-size:13px}
+.metric-note{font-size:11px}
+.trend-up,.trend-down{font-size:12px}
+.deadline-copy strong{font-size:14px}
+.deadline-copy p{font-size:12px}
+.deadline-progress>div:first-child{font-size:11px}
+.deadline-progress strong{font-size:12px}
+.status-badge{font-size:11px}
+.avatar-md{font-size:14px}
+.avatar-sm{font-size:13px}
+.avatar-xs{font-size:11px}
+.avatar-xl{font-size:25px}
+.full-secondary-button{font-size:12px}
+.table-sub{font-size:11px}
+.segmented button{font-size:12px}
+.empty-state h3{font-size:15px}
+.empty-state p{font-size:13px}
+.filter-tabs button{font-size:13px}
+.filter-tabs button span{font-size:10px}
+.data-table{font-size:13px}
+.data-table th{font-size:11px}
+.table-footer{font-size:11px}
+.pagination button{font-size:12px}
+.local-search input{font-size:12px}
+.row-actions button{font-size:12px}
+.card-tabs button{font-size:12px}
+.card-tabs button span{font-size:10px}
+.team-mark{font-size:12px}
+.team-name-cell strong{font-size:13px}
+.team-name-cell small{font-size:10px}
+.completion-cell>span{font-size:11px}
+.donut strong{font-size:27px}
+.donut strong span{font-size:15px}
+.donut small{font-size:11px}
+.report-status-list>div{font-size:12px}
+.report-status-list strong{font-size:13px}
+.chart-summary>strong{font-size:25px}
+.chart-summary>strong small{font-size:12px}
+.chart-summary>span:last-child{font-size:11px}
+.chart-tooltip{font-size:12px}
+.rank{font-size:13px}
+.leader-item strong{font-size:13px}
+.leader-item small{font-size:10px}
+.leader-points{font-size:15px}
+.leader-points small{font-size:10px}
+.my-rank{font-size:11px}
+.my-rank strong{font-size:15px}
+.my-rank button{font-size:11px}
+.activity-item p{font-size:12px}
+.activity-item span{font-size:10px}
+.month-calendar span{font-size:10px}
+.month-calendar strong{font-size:26px}
+.report-month-banner h3{font-size:16px}
+.report-month-banner p{font-size:12px}
+.month-banner-stat>span{font-size:11px}
+.month-banner-stat strong{font-size:23px}
+.month-banner-stat small{font-size:12px}
+.compact .metric-value{font-size:26px}
+.report-team strong{font-size:13px}
+.review-footer>div:first-child{font-size:12px}
+.review-status-row{font-size:12px}
+.review-tabs button{font-size:13px}
+.review-stat-grid span{font-size:11px}
+.review-stat-grid strong{font-size:24px}
+.review-stat-grid small{font-size:11px}
+.review-section h3{font-size:13px}
+.review-section p{font-size:13px}
+.task-index{font-size:13px}
+.review-tasks strong{font-size:13px}
+.review-tasks p{font-size:11px}
+.review-tasks>div>span:last-child{font-size:13px}
+.member-record-list strong{font-size:13px}
+.member-record-list p{font-size:11px}
+.audit-timeline span{font-size:11px}
+.audit-timeline strong{font-size:13px}
+.audit-timeline p{font-size:12px}
+.task-stat strong{font-size:23px}
+.task-stat span:not(.metric-icon){font-size:12px}
+.task-title-cell strong{font-size:13px}
+.task-title-cell small{font-size:10px}
+.task-progress span{font-size:11px}
+.status-select{font-size:11px}
+.kanban-title>span{font-size:11px}
+.kanban-card-top>span{font-size:10px}
+.kanban-card h3{font-size:13px}
+.kanban-card p{font-size:11px}
+.kanban-footer>span{font-size:10px}
+.team-summary-strip>div>span{font-size:12px}
+.team-summary-strip strong{font-size:20px}
+.team-large-mark{font-size:15px}
+.team-card h2{font-size:16px}
+.team-card>p{font-size:12px}
+.team-leader{font-size:11px}
+.team-card-stats strong{font-size:18px}
+.team-card-stats small{font-size:12px}
+.team-card-stats span{font-size:10px}
+.team-card-footer button{font-size:11px}
+.member-insights strong{font-size:24px}
+.member-insights p{font-size:11px}
+.member-insights small{font-size:11px}
+.member-cell strong{font-size:13px}
+.member-cell strong span{font-size:10px}
+.member-cell small{font-size:10px}
+.role-tag{font-size:11px}
+.points-number{font-size:15px}
+.points-month{font-size:10px}
+.points-hero-main>span{font-size:13px}
+.points-hero-main strong{font-size:53px}
+.points-hero-main small{font-size:15px}
+.points-hero-main p{font-size:11px}
+.points-hero-stats span{font-size:11px}
+.points-hero-stats strong{font-size:25px}
+.points-hero-stats small{font-size:12px}
+.points-donut strong{font-size:25px}
+.points-donut span{font-size:10px}
+.points-legend>div{font-size:12px}
+.points-quote p{font-size:11px}
+.contribution-grid strong{font-size:22px}
+.contribution-grid span{font-size:11px}
+.transaction-id{font-size:10px}
+.positive-points{font-size:15px}
+.negative-points{font-size:15px}
+.rules-note{font-size:12px}
+.ranking-note{font-size:12px}
+.podium-avatar>span{font-size:11px}
+.podium-item>strong{font-size:14px}
+.podium-item>small{font-size:10px}
+.podium-item>b{font-size:21px}
+.podium-item b em{font-size:11px}
+.analytics-highlight>div>span{font-size:12px}
+.analytics-highlight>div>strong{font-size:31px}
+.analytics-highlight p{font-size:11px}
+.participation-bars small{font-size:10px}
+.highlight-side strong small{font-size:13px}
+.distribution-chart strong{font-size:20px}
+.distribution-chart span{font-size:10px}
+.distribution-legend>div{font-size:11px}
+.distribution-legend strong{font-size:12px}
+.updated-time{font-size:11px}
+.annual-summary-grid span{font-size:11px}
+.annual-summary-grid strong{font-size:24px}
+.annual-summary-grid small{font-size:11px}
+.annual-summary-grid p{font-size:10px}
+.settings-nav button{font-size:13px}
+.settings-title h2{font-size:15px}
+.settings-title p{font-size:11px}
+.setting-toggle strong{font-size:13px}
+.setting-toggle p{font-size:11px}
+.modal-header h2{font-size:18px}
+.modal-header p{font-size:12px}
+.field-label{font-size:12px}
+.field-label small{font-size:10px}
+.field input,.field select,.field textarea,.editor-member-row input,.editor-member-row select{font-size:13px}
+.field-error{font-size:11px}
+.word-count{font-size:10px}
+.radio-group button{font-size:12px}
+.upload-box>span{font-size:12px}
+.upload-box small{font-size:10px}
+.toast{font-size:13px}
+.invitation-note{font-size:11px}
+.number-input span{font-size:12px}
+.adjust-warning{font-size:12px}
+.editor-steps>button small{font-size:10px}
+.editor-steps>button strong{font-size:12px}
+.editor-tip p{font-size:11px}
+.editor-section-title>span{font-size:25px}
+.editor-section-title h2{font-size:18px}
+.editor-section-title p{font-size:12px}
+.editor-task-summary strong{font-size:21px}
+.editor-task-summary span{font-size:11px}
+.editor-task-list strong{font-size:13px}
+.editor-task-list p{font-size:11px}
+.batch-actions>span{font-size:12px}
+.editor-member-head{font-size:11px}
+.editor-member-row>div:first-child{font-size:12px}
+.editor-member-row input,.editor-member-row select{font-size:12px}
+.suggested-points>span{font-size:11px}
+.points-calculation-note{font-size:11px}
+.submit-checklist h3{font-size:14px}
+.submit-checklist>div{font-size:12px}
+.member-profile-hero h2{font-size:22px}
+.member-profile-hero h2 span{font-size:13px}
+.member-profile-hero p{font-size:13px}
+.member-profile-hero>div>div>span:last-child{font-size:11px}
+.member-detail-stats strong{font-size:22px}
+.member-detail-stats span{font-size:11px}
+.member-contribution-overview h3{font-size:13px}
+.contribution-caption{font-size:10px}
+.simple-timeline>div{font-size:11px}
+.profile-info-list span{font-size:11px}
+.profile-info-list strong{font-size:13px}
+.team-detail-hero h3{font-size:14px}
+.team-detail-hero p{font-size:11px}
+.team-detail-chart h3,.team-members-preview h3{font-size:13px}
+.team-members-preview>div>div{font-size:11px}
+.language-button{font-size:14px}
+.language-menu button strong{font-size:15px}
+.language-menu button small{font-size:13px}
+/* ==== FONT BOOST END ==== */
 @media(min-width:1500px){.main-content{padding:34px 40px 44px}.topbar{padding:0 40px}.metric-card{padding:19px 21px}.teams-grid{grid-template-columns:repeat(4,1fr)}.data-table td{padding-top:14px;padding-bottom:14px}}
 @media(max-width:1250px){.sidebar{width:214px}.main-shell{margin-left:214px}.main-content{padding:25px 23px 35px}.topbar{padding:0 23px}.global-search{width:220px}.teams-grid{grid-template-columns:repeat(3,1fr)}.dashboard-main-grid,.dashboard-chart-grid{grid-template-columns:minmax(0,2fr) 250px}.team-table th:nth-child(4),.team-table td:nth-child(4){display:none}.activity-list{gap:12px}.points-hero-stats>div{padding:3px 20px}.reports-table th:nth-child(5),.reports-table td:nth-child(5){display:none}.report-month-banner .month-banner-stat{padding:0 16px}.team-summary-strip>i{margin:0 16px}}
 @media(max-width:1020px){.sidebar{transform:translateX(-100%);width:238px;transition:.25s}.sidebar.open{transform:none;box-shadow:10px 0 40px rgba(0,0,0,.14)}.sidebar-scrim{display:block;position:fixed;inset:0;background:rgba(20,20,15,.35);z-index:35}.main-shell{margin-left:0}.mobile-menu{display:grid}.topbar-left .breadcrumb-root{display:none}.topbar-left>svg{display:none}.main-content{padding:24px}.metrics-grid{grid-template-columns:repeat(2,1fr)}.dashboard-main-grid,.dashboard-chart-grid{grid-template-columns:1fr}.report-progress-card{display:grid;grid-template-columns:1fr 1fr;align-items:center}.report-progress-card .card-header{grid-column:1/-1}.report-progress-card>.full-secondary-button{grid-column:1/-1;margin-top:15px}.teams-grid{grid-template-columns:repeat(2,1fr)}.task-stats-row{grid-template-columns:repeat(2,1fr)}.points-content-grid,.analytics-grid{grid-template-columns:1fr}.points-hero{flex-direction:column;align-items:flex-start;gap:25px}.points-hero-stats{width:100%}.points-hero-stats>div{flex:1}.points-hero-stats>div:first-child{border-left:0;padding-left:0}.activity-list{grid-template-columns:1fr}.activity-item p{white-space:normal}.report-month-banner{flex-wrap:wrap}.report-month-banner>div:nth-child(2){min-width:200px}.settings-layout{grid-template-columns:160px 1fr}.annual-summary-grid{grid-template-columns:repeat(3,1fr);gap:8px}.annual-summary-grid>div{border:0;border-radius:6px!important}.member-insights small{display:none}.report-editor-layout{grid-template-columns:190px 1fr}}
 @media(max-width:720px){.topbar{height:59px;padding:0 15px}.topbar-right{gap:7px}.topbar-right>.button{width:34px;padding:0;font-size:0}.topbar-right>.button svg{width:17px}.global-search{width:35px;border:0;background:none;padding:0}.global-search input,.global-search kbd{display:none}.global-search:focus-within{position:absolute;left:12px;right:58px;width:auto;background:#fff;border:1px solid #ddd;padding:0 10px;z-index:5}.global-search:focus-within input{display:block}.search-results{width:100%}.main-content{padding:20px 14px 30px}.page-title-row{flex-direction:column;margin-bottom:19px;gap:14px}.page-title-row h1{font-size:23px}.page-actions{width:100%;overflow-x:auto}.page-actions .button{flex:1}.metrics-grid{grid-template-columns:1fr 1fr;gap:9px}.metric-card{padding:14px}.metric-value{font-size:25px}.metric-note{white-space:normal;line-height:1.5}.deadline-banner{flex-wrap:wrap}.deadline-copy{min-width:calc(100% - 60px)}.deadline-progress{width:auto;flex:1;margin:0}.deadline-banner>.button{flex:none}.team-overview-card .card-tabs{overflow-x:auto}.dashboard-main-grid,.dashboard-chart-grid{gap:12px}.report-progress-card{display:block}.report-progress-card>.full-secondary-button{margin-top:0}.report-month-banner{padding:17px}.report-month-banner>div:nth-child(2){min-width:calc(100% - 70px)}.month-banner-stat{flex:1;border-left:0;padding:5px 0!important}.report-month-banner>.button{width:100%}.table-toolbar{align-items:flex-start;flex-direction:column}.toolbar-right{width:100%;overflow-x:auto}.filter-tabs{width:100%;overflow-x:auto}.local-search{min-width:200px;flex:1}.task-stats-row{gap:8px}.task-stat{padding:11px;gap:8px}.task-stat .metric-icon{width:30px;height:30px}.teams-grid{grid-template-columns:1fr}.team-summary-strip{display:grid;grid-template-columns:1fr 1fr;gap:18px}.team-summary-strip>i{display:none}.member-insights{grid-template-columns:1fr}.points-hero{padding:24px}.points-hero-stats>div{padding:3px 12px}.points-hero-stats strong{font-size:20px}.points-donut-row{gap:18px;padding:4px 17px 18px}.points-donut{width:112px;height:112px}.points-donut:before{width:78px;height:78px}.points-legend>div{gap:5px}.points-content-grid{gap:12px}.analytics-highlight{flex-wrap:wrap;padding:19px}.analytics-highlight>div:first-child{width:100%}.participation-bars{order:3;width:100%;border:0;border-top:1px solid #eee;padding:18px 0 0;margin-top:18px}.highlight-side{border-left:1px solid #eee;padding-left:20px;margin-top:15px}.annual-summary-grid{grid-template-columns:1fr 1fr}.settings-layout{grid-template-columns:1fr}.settings-nav{flex-direction:row;overflow-x:auto}.settings-nav button{white-space:nowrap}.form-grid{grid-template-columns:1fr}.field-full{grid-column:auto}.modal-backdrop{padding:0}.modal{max-height:100vh;height:100%;border-radius:0}.modal-header{padding:18px}.modal-body{padding:18px}.modal-footer{padding:12px 18px;flex-wrap:wrap}.modal-full .modal-body{padding:0}.review-footer{flex-direction:column;align-items:flex-start}.review-footer>div:last-child{width:100%;overflow-x:auto}.review-stat-grid{grid-template-columns:1fr 1fr}.review-stat-grid>div:nth-child(2){border-right:0}.review-stat-grid>div:nth-child(-n+2){border-bottom:1px solid #e7e7e2}.report-editor-layout{grid-template-columns:1fr;overflow-y:auto}.editor-steps{border-right:0;border-bottom:1px solid var(--line);padding:9px;display:grid;grid-template-columns:repeat(4,1fr)}.editor-steps>button{padding:8px 4px;justify-content:center;margin:0}.editor-steps>button>div{display:none}.editor-tip{display:none}.editor-form{padding:20px 17px;overflow:visible}.editor-task-summary{padding:12px;gap:8px}.editor-task-summary>div{padding-right:12px;margin-right:4px}.editor-member-table{overflow-x:auto}.editor-member-head,.editor-member-row{min-width:650px}.submit-checklist{grid-template-columns:1fr}.member-profile-hero .avatar-xl{width:56px;height:56px}.member-detail-stats>div{padding:12px}.member-detail-stats strong{font-size:18px}.contribution-calendar{grid-auto-columns:8px;grid-template-rows:repeat(7,8px);gap:3px}.contribution-calendar i{width:8px;height:8px}.app-footer{padding:15px;flex-direction:column;gap:6px}.podium{gap:12px;padding-left:5px;padding-right:5px}.podium-item{width:95px}.review-tabs{gap:16px;overflow-x:auto}.review-tabs button{white-space:nowrap}.profile-info-list{grid-template-columns:1fr}.notifications-panel{position:fixed;top:58px;left:12px;right:12px;width:auto}.toast{width:calc(100% - 28px);font-size:10px}.editor-footer-right>.button{padding:0 10px}.table-footer{gap:10px}.table-footer>span:last-child:not(:first-child){display:none}}
 @media(max-width:420px){.metrics-grid{grid-template-columns:1fr}.task-stats-row{grid-template-columns:1fr 1fr}.task-stat>svg{display:none}.points-donut-row{flex-direction:column}.points-hero-stats span{font-size:8px}.points-hero-stats strong{font-size:18px}.points-hero-main strong{font-size:46px}.page-actions .select-button{display:none}}
 @media(max-width:720px){.language-button span{display:none}.language-button{padding:0 8px}.brand-logo{width:132px}}
+
+/* ==== Auth / Login ==== */
+.boot-screen{min-height:100vh;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:20px;background:#f6f6f4}
+.boot-screen img{width:190px}
+.boot-screen span{font-size:13px;color:#92928e;letter-spacing:.04em}
+.login-page{min-height:100vh;display:grid;grid-template-columns:minmax(0,1.05fr) minmax(0,1fr);background:#fff}
+.login-brand{position:relative;overflow:hidden;background:#141414;color:#fff;padding:46px 56px;display:flex;flex-direction:column;justify-content:space-between;min-height:100vh}
+.login-brand:before{content:'';position:absolute;width:520px;height:520px;border-radius:50%;background:radial-gradient(circle,rgba(230,43,30,.28),transparent 65%);right:-170px;top:-160px}
+.login-brand-x{position:absolute;right:-40px;bottom:-150px;font-size:430px;line-height:1;font-weight:800;color:rgba(255,255,255,.035);pointer-events:none}
+.login-brand-top img{width:230px;max-width:70%;height:auto;display:block}
+.login-brand-copy{position:relative;z-index:1;max-width:520px}
+.login-eyebrow{display:inline-block;font-size:12px;letter-spacing:.22em;color:#e62b1e;font-weight:700;margin-bottom:22px}
+.login-brand-copy h1{font-size:56px;line-height:1.08;letter-spacing:-.03em;margin:0 0 24px;font-weight:700}
+.login-brand-copy h1 span{color:#e62b1e}
+.login-brand-copy p{font-size:18px;line-height:1.6;margin:0 0 10px;color:#f2f2ee}
+.login-brand-copy small{font-size:13px;color:#a5a5a0;letter-spacing:.03em}
+.login-brand-footer{position:relative;z-index:1;font-size:12px;color:#8d8d88;letter-spacing:.06em}
+.login-panel{position:relative;display:flex;flex-direction:column;padding:32px 56px 26px;min-height:100vh}
+.login-panel-top{display:flex;justify-content:flex-end}
+.login-form{width:100%;max-width:410px;margin:auto;display:flex;flex-direction:column}
+.login-form-eyebrow{font-size:11px;font-weight:700;letter-spacing:.18em;color:#e62b1e;margin-bottom:14px}
+.login-form h2{font-size:32px;letter-spacing:-.02em;margin:0 0 10px}
+.login-form-sub{font-size:14px;line-height:1.7;color:#777772;margin:0 0 32px}
+.login-field{display:flex;flex-direction:column;gap:9px;margin-bottom:19px}
+.login-field>span{font-size:13px;font-weight:600;color:#3b3b38}
+.login-field input{width:100%;height:48px;padding:0 14px;border:1px solid #dededa;border-radius:8px;background:#fbfbfa;font-size:15px;color:#252523;outline:none;transition:.2s;font-family:inherit}
+.login-field input:focus{border-color:#e62b1e;background:#fff;box-shadow:0 0 0 3px rgba(230,43,30,.09)}
+.login-error{display:flex;align-items:center;gap:9px;padding:11px 13px;border-radius:8px;background:#fff1f0;color:#b42318;font-size:13px;margin:2px 0 16px}
+.login-submit{margin-top:8px;height:50px;border:0;border-radius:8px;background:#e62b1e;color:#fff;font-size:15px;font-weight:700;font-family:inherit;display:flex;align-items:center;justify-content:center;gap:10px;cursor:pointer;transition:.2s}
+.login-submit:hover:not(:disabled){background:#c92217;transform:translateY(-1px)}
+.login-submit:disabled{opacity:.65;cursor:wait}
+.login-secure{display:flex;align-items:flex-start;gap:8px;margin:22px 0 0;font-size:12px;line-height:1.6;color:#85857f}
+.login-secure svg{flex:none;margin-top:2px}
+.login-help{font-size:12px;color:#a0a09a;margin:10px 0 0}
+.login-panel-footer{font-size:11px;color:#a8a8a2;text-align:center}
+
+/* ==== Greeting settings & account ==== */
+.profile-menu-role{padding:0 14px 10px;font-size:12px;color:#8a8a84}
+.greeting-preview{display:flex;flex-direction:column;gap:6px;padding:16px 18px;border-radius:8px;background:linear-gradient(100deg,#fff5f3,#fafafa);border:1px solid #f2dedb;margin-bottom:20px}
+.greeting-preview small{font-size:11px;color:#a08a86;letter-spacing:.08em}
+.greeting-preview strong{font-size:22px;color:#20201e;letter-spacing:-.01em}
+.greeting-hint{display:flex;align-items:flex-start;gap:8px;font-size:12px;line-height:1.7;color:#83837d;margin:16px 0 0}
+.greeting-hint svg{flex:none;margin-top:2px;color:#e62b1e}
+.greeting-actions{display:flex;gap:10px;margin-top:18px;flex-wrap:wrap}
+.account-info-grid{display:grid;grid-template-columns:repeat(3,1fr);gap:12px;margin-top:4px}
+.account-info-grid>div{display:flex;flex-direction:column;gap:6px;padding:14px;background:#fafaf8;border:1px solid #eee;border-radius:8px;min-width:0}
+.account-info-grid span{font-size:11px;color:#8c8c86}
+.account-info-grid strong{font-size:14px;color:#2b2b28;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+
+/* ==== Responsive additions ==== */
+@media(max-width:900px){.login-page{grid-template-columns:1fr}.login-brand{min-height:auto;padding:28px 26px 32px;gap:28px}.login-brand-top img{width:180px}.login-brand-copy h1{font-size:34px;margin-bottom:12px}.login-brand-copy p{font-size:15px}.login-brand-copy small{display:none}.login-brand-x{font-size:260px;right:-60px;bottom:-100px}.login-panel{min-height:auto;padding:22px 26px 26px}.login-form{max-width:none;margin:38px auto 46px}.login-form h2{font-size:27px}}
+@media(max-width:720px){.account-info-grid{grid-template-columns:1fr}.greeting-preview strong{font-size:19px}.page-title-row h1{font-size:25px}.metric-value{font-size:27px}.points-hero-stats strong{font-size:22px}.toast{font-size:12px}}
+@media(max-width:420px){.points-hero-stats span{font-size:10px}.points-hero-stats strong{font-size:20px}.points-hero-main strong{font-size:48px}}

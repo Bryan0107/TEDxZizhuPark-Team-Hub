@@ -1,4 +1,4 @@
-import React, { useContext, useEffect, useMemo, useState } from 'react';
+import React, { useContext, useEffect, useMemo, useRef, useState } from 'react';
 import {
   LayoutDashboard, Coins, FileText, CheckSquare, UsersRound, UserRound,
   BarChart3, Settings, Search, Bell, ChevronDown, ChevronRight, Plus,
@@ -15,6 +15,8 @@ import {
   BarChart, Bar, Cell, PieChart, Pie, LineChart, Line, Legend
 } from 'recharts';
 import { teams as initialTeams, members as initialMembers, initialTasks, initialReports, pointTransactions, trendData } from './data';
+import { fetchTable, syncTable, fetchSettings, saveSettings } from './api';
+import { getCurrentUser, signIn, signOut, updateMyPrefs, roleLabel } from './auth';
 
 const statusTone = {
   '已通过': 'green', '已入账': 'green', '已完成': 'green', '活跃': 'green', '正常': 'blue',
@@ -83,7 +85,22 @@ const dictionaries = {
     pointsDistribution: '积分贡献分布', pointsDistributionSub: '按积分类型统计', annualSummary: '年度组织摘要', annualSummarySub: '核心运营指标一览',
     generalSettings: '通用设置', notificationSettings: '通知设置', rolePermissions: '角色与权限', dataBackup: '数据与备份',
     organizationYear: '年度与组织信息', organizationYearSub: '设置当前工作年度和组织基础信息', featurePreferences: '功能偏好', featurePreferencesSub: '根据组织习惯调整平台行为', inAppNotifications: '站内通知', inAppNotificationsSub: '选择你希望接收的组织动态',
-    languageSwitched: '界面语言已切换'
+    languageSwitched: '界面语言已切换',
+    signInTitle: '欢迎回来', signInSubtitle: '登录 TEDxZizhuPark Team Hub，继续记录每一份贡献。',
+    signInEmail: '邮箱地址', signInPassword: '登录密码', signInSubmit: '登录 Team Hub', signInLoading: '正在验证…',
+    signInError: '邮箱或密码不正确，请重试。', signInHelp: '无法登录？请联系核心管理团队重置账号。',
+    signInBrand: '让每一次参与，都被看见。', signInBrandSub: '年度团队运营 · 成员贡献记录 · 内部积分管理',
+    signInRemember: '记住此设备', signInSecure: '账号由组织统一开通，登录后即可访问对应权限的工作台。',
+    greetingTitle: '个性化问候语', greetingSub: '设置登录后首页的欢迎文案，所有成员账号自动生效',
+    greetingOrgZh: '组织默认文案（中文）', greetingOrgEn: '组织默认文案（English）',
+    greetingPersonal: '我的专属文案（可选）', greetingPersonalHint: '留空则使用组织默认文案',
+    greetingPlaceholders: '可使用变量：{name} 成员姓名 · {time} 按时段的问候（早上好 / 下午好 / 晚上好）',
+    greetingPreview: '实时预览', greetingSave: '保存问候语', greetingSaved: '问候语已保存，首页已更新',
+    greetingReset: '恢复默认', greetingAutoNote: '新开通的账号无需额外配置，登录后会自动显示其姓名。',
+    accountTitle: '账号与访问', accountSub: '当前登录账号及权限信息',
+    accountEmail: '登录邮箱', accountRole: '系统角色', accountTeam: '所属团队',
+    accountProvision: '成员账号由管理员在 Appwrite Auth 中开通；开通后成员使用邮箱与初始密码登录，即可自动访问对应权限的页面。',
+    greetingDynamicSub: '每一次参与，都值得被记录。'
   },
   en: {
     workspace: 'Workspace', operations: 'Team Operations', management: 'Organization',
@@ -132,8 +149,29 @@ const dictionaries = {
     pointsDistribution: 'Points Distribution', pointsDistributionSub: 'By contribution type', annualSummary: 'Annual Summary', annualSummarySub: 'Key organizational metrics',
     generalSettings: 'General', notificationSettings: 'Notifications', rolePermissions: 'Roles & Permissions', dataBackup: 'Data & Backup',
     organizationYear: 'Year & Organization', organizationYearSub: 'Set the working year and organization details', featurePreferences: 'Feature Preferences', featurePreferencesSub: 'Adjust platform behavior to fit your team', inAppNotifications: 'In-app Notifications', inAppNotificationsSub: 'Choose the organizational updates you receive',
-    languageSwitched: 'Interface language updated'
+    languageSwitched: 'Interface language updated',
+    signInTitle: 'Welcome back', signInSubtitle: 'Sign in to TEDxZizhuPark Team Hub and keep every contribution visible.',
+    signInEmail: 'Email address', signInPassword: 'Password', signInSubmit: 'Sign in to Team Hub', signInLoading: 'Verifying…',
+    signInError: 'Incorrect email or password. Please try again.', signInHelp: 'Trouble signing in? Ask the core team to reset your account.',
+    signInBrand: 'Every contribution deserves to be seen.', signInBrandSub: 'Annual operations · Contribution records · Internal points',
+    signInRemember: 'Remember this device', signInSecure: 'Accounts are provisioned by the organization. Your workspace opens with the right permissions after sign-in.',
+    greetingTitle: 'Personalized Greeting', greetingSub: 'Customize the welcome message shown on the home page for all provisioned accounts',
+    greetingOrgZh: 'Organization default (Chinese)', greetingOrgEn: 'Organization default (English)',
+    greetingPersonal: 'My personal greeting (optional)', greetingPersonalHint: 'Leave blank to use the organization default',
+    greetingPlaceholders: 'Variables: {name} member name · {time} time-of-day greeting',
+    greetingPreview: 'Live preview', greetingSave: 'Save greeting', greetingSaved: 'Greeting saved and home page updated',
+    greetingReset: 'Restore default', greetingAutoNote: 'Newly provisioned accounts need no setup — their name appears automatically.',
+    accountTitle: 'Account & Access', accountSub: 'Current account and permissions',
+    accountEmail: 'Email', accountRole: 'Role', accountTeam: 'Team',
+    accountProvision: 'Member accounts are provisioned by an admin in Appwrite Auth. Once created, members sign in with their email and initial password and automatically see the pages their role allows.',
+    greetingDynamicSub: 'Every contribution deserves to be recorded.'
   }
+};
+
+const ROLE_PAGES = {
+  admin: ['dashboard', 'myPoints', 'reports', 'tasks', 'teams', 'members', 'pointsManagement', 'analytics', 'settings'],
+  leader: ['dashboard', 'myPoints', 'reports', 'tasks', 'teams', 'members', 'analytics', 'settings'],
+  member: ['dashboard', 'myPoints', 'teams', 'settings'],
 };
 
 const getPageMeta = t => ({
@@ -249,14 +287,136 @@ function usePersistentState(key, initialValue) {
   return [value, setValue];
 }
 
+function useCloudState(storageKey, table, seed) {
+  const [items, setItems] = usePersistentState(storageKey, seed);
+  const [cloudReady, setCloudReady] = useState(false);
+  const booted = useRef(false);
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      try {
+        let remote = await fetchTable(table);
+        if (!remote.length) {
+          await syncTable(table, seed);
+          remote = await fetchTable(table);
+        }
+        if (!cancelled && remote.length) setItems(remote);
+      } catch (err) {
+        console.warn(`[Team Hub] ${table} 云端读取失败，使用本地缓存`, err);
+      }
+      if (!cancelled) setCloudReady(true);
+    })();
+    return () => { cancelled = true; };
+  }, [table]);
+  useEffect(() => {
+    if (!cloudReady || !booted.current) { booted.current = true; return; }
+    const timer = setTimeout(() => { syncTable(table, items).catch(() => {}); }, 700);
+    return () => clearTimeout(timer);
+  }, [items, cloudReady, table]);
+  return [items, setItems];
+}
+
+const DAY_PARTS = {
+  zh: ['早上好', '下午好', '晚上好'],
+  en: ['Good morning', 'Good afternoon', 'Good evening'],
+};
+
+function timeOfDayWord(language, date = new Date()) {
+  const hour = date.getHours();
+  const index = hour < 12 ? 0 : hour < 18 ? 1 : 2;
+  return (DAY_PARTS[language] || DAY_PARTS.zh)[index];
+}
+
+function renderGreeting({ language = 'zh', template = '', name = '', date = new Date() }) {
+  const time = timeOfDayWord(language, date);
+  const fallback = language === 'en' ? `${time}, ${name}.` : `${time}，${name}。`;
+  if (!template || !template.trim()) return fallback;
+  let text = template.replace(/\{name\}/g, name).replace(/\{time\}/g, time);
+  if (!/\{name\}/.test(template) && name) text += language === 'en' ? ` ${name}` : ` ${name}`;
+  return text.trim();
+}
+
+function greetingSubtitle(language, date = new Date()) {
+  const formatted = new Intl.DateTimeFormat(language === 'en' ? 'en-US' : 'zh-CN', {
+    month: 'long', day: 'numeric', weekday: 'long',
+  }).format(date);
+  return language === 'en'
+    ? `${formatted} · Every contribution deserves to be recorded.`
+    : `${formatted} · 每一次参与，都值得被记录。`;
+}
+
+function LoginPage({ onLogin, language, setLanguage }) {
+  const t = key => dictionaries[language]?.[key] ?? dictionaries.zh[key] ?? key;
+  const isEn = language === 'en';
+  const [email, setEmail] = useState('');
+  const [password, setPassword] = useState('');
+  const [error, setError] = useState('');
+  const [busy, setBusy] = useState(false);
+  const submit = async event => {
+    event.preventDefault();
+    if (busy) return;
+    setBusy(true); setError('');
+    try {
+      const user = await signIn(email, password);
+      if (!user) throw new Error('session missing');
+      onLogin(user);
+    } catch {
+      setError(t('signInError'));
+      setBusy(false);
+    }
+  };
+  return <div className="login-page">
+    <section className="login-brand">
+      <div className="login-brand-top"><img src="/assets/logo-white.png" alt="TEDxZizhuPark" /></div>
+      <div className="login-brand-copy">
+        <span className="login-eyebrow">TEDxZizhuPark · TEAM HUB</span>
+        <h1>Ideas change<br />everything<span>.</span></h1>
+        <p>{t('signInBrand')}</p>
+        <small>{t('signInBrandSub')}</small>
+      </div>
+      <div className="login-brand-footer">2026 · TEDxZizhuPark · Ideas worth spreading</div>
+      <span className="login-brand-x">x</span>
+    </section>
+    <section className="login-panel">
+      <div className="login-panel-top"><button className="language-button" onClick={() => setLanguage(isEn ? 'zh' : 'en')}><Globe2 size={16} /><span>{isEn ? '中文' : 'English'}</span><ChevronDown size={13} /></button></div>
+      <form className="login-form" onSubmit={submit}>
+        <span className="login-form-eyebrow">TEAM HUB · V1.0</span>
+        <h2>{t('signInTitle')}</h2>
+        <p className="login-form-sub">{t('signInSubtitle')}</p>
+        <label className="login-field"><span>{t('signInEmail')}</span><input type="email" required autoComplete="username" placeholder="name@tedxzizhupark.com" value={email} onChange={e => setEmail(e.target.value)} /></label>
+        <label className="login-field"><span>{t('signInPassword')}</span><input type="password" required autoComplete="current-password" placeholder="••••••••" value={password} onChange={e => setPassword(e.target.value)} /></label>
+        {error && <div className="login-error"><CircleAlert size={16} /><span>{error}</span></div>}
+        <button className="login-submit" type="submit" disabled={busy}>{busy ? t('signInLoading') : t('signInSubmit')}<ArrowUpRight size={17} /></button>
+        <p className="login-secure"><LockKeyhole size={14} /><span>{t('signInSecure')}</span></p>
+        <p className="login-help">{t('signInHelp')}</p>
+      </form>
+      <div className="login-panel-footer">© 2026 TEDxZizhuPark · Ideas change everything.</div>
+    </section>
+  </div>;
+}
+
 export default function App() {
+  const [session, setSession] = useState(undefined);
+  const [language, setLanguage] = usePersistentState('tedx-hub-language', 'zh');
+  useEffect(() => {
+    let alive = true;
+    getCurrentUser().then(user => { if (alive) setSession(user || null); });
+    return () => { alive = false; };
+  }, []);
+  const handleLogout = async () => { await signOut(); setSession(null); };
+  if (session === undefined) return <div className="boot-screen"><img src="/assets/logo-black.png" alt="TEDxZizhuPark" /><span>Loading Team Hub…</span></div>;
+  if (!session) return <LoginPage onLogin={setSession} language={language} setLanguage={setLanguage} />;
+  return <MainApp session={session} onLogout={handleLogout} onSessionUpdate={setSession} language={language} setLanguage={setLanguage} />;
+}
+
+function MainApp({ session, onLogout, onSessionUpdate, language, setLanguage }) {
   const [activePage, setActivePage] = useState('dashboard');
   const [sidebarOpen, setSidebarOpen] = useState(false);
-  const [tasks, setTasks] = usePersistentState('tedx-hub-tasks', initialTasks);
-  const [reports, setReports] = usePersistentState('tedx-hub-reports', initialReports);
-  const [members, setMembers] = usePersistentState('tedx-hub-members', initialMembers);
-  const [teams] = useState(initialTeams);
-  const [transactions, setTransactions] = usePersistentState('tedx-hub-transactions', pointTransactions);
+  const [tasks, setTasks] = useCloudState('tedx-hub-tasks', 'tasks', initialTasks);
+  const [reports, setReports] = useCloudState('tedx-hub-reports', 'reports', initialReports);
+  const [members, setMembers] = useCloudState('tedx-hub-members', 'members', initialMembers);
+  const [teams] = useCloudState('tedx-hub-teams', 'teams', initialTeams);
+  const [transactions, setTransactions] = useCloudState('tedx-hub-transactions', 'points_transactions', pointTransactions);
   const [modal, setModal] = useState(null);
   const [toast, setToast] = useState('');
   const [search, setSearch] = useState('');
@@ -264,13 +424,28 @@ export default function App() {
   const [notificationsOpen, setNotificationsOpen] = useState(false);
   const [profileOpen, setProfileOpen] = useState(false);
   const [languageOpen, setLanguageOpen] = useState(false);
-  const [language, setLanguage] = usePersistentState('tedx-hub-language', 'zh');
-  const [role, setRole] = useState('admin');
-  const [year, setYear] = useState('2026 年度');
-  const t = key => dictionaries[language]?.[key] ?? dictionaries.zh[key] ?? key;
+  const [orgSettings, setOrgSettings] = useState({ zh: '', en: '' });
+  const role = session?.prefs?.role || 'member';
   const isEn = language === 'en';
+  const t = key => dictionaries[language]?.[key] ?? dictionaries.zh[key] ?? key;
+  const displayName = session?.prefs?.displayName || session?.name || '';
+  const personalTemplate = isEn
+    ? (session?.prefs?.greetingEn || session?.prefs?.greeting || '')
+    : (session?.prefs?.greeting || '');
+  const greetingText = renderGreeting({
+    language,
+    template: personalTemplate || orgSettings[language] || '',
+    name: displayName,
+  });
+  useEffect(() => {
+    let alive = true;
+    fetchSettings().then(values => { if (alive) setOrgSettings(values); });
+    return () => { alive = false; };
+  }, []);
   const pageMeta = getPageMeta(t);
-  const navGroups = getNavGroups(t);
+  const allowedPages = ROLE_PAGES[role] || ROLE_PAGES.member;
+  const navGroups = getNavGroups(t).map(group => ({ ...group, items: group.items.filter(item => allowedPages.includes(item.id)) })).filter(group => group.items.length);
+  useEffect(() => { if (!allowedPages.includes(activePage)) setActivePage('dashboard'); }, [role]);
 
   const navigate = page => { setActivePage(page); setSidebarOpen(false); setSearch(''); setSearchFocus(false); setLanguageOpen(false); setNotificationsOpen(false); setProfileOpen(false); window.scrollTo(0, 0); };
   const notify = message => setToast(message);
@@ -315,8 +490,8 @@ export default function App() {
     case 'myPoints': content = <MyPointsPage transactions={transactions} {...shared} />; break;
     case 'pointsManagement': content = <PointsManagement transactions={transactions} setTransactions={setTransactions} {...shared} />; break;
     case 'analytics': content = <AnalyticsPage teams={teams} {...shared} />; break;
-    case 'settings': content = <SettingsPage notify={notify} t={t} />; break;
-    default: content = <Dashboard teams={teams} reports={reports} tasks={tasks} {...shared} />;
+    case 'settings': content = <SettingsPage notify={notify} t={t} isEn={isEn} session={session} role={role} orgSettings={orgSettings} onOrgSettings={setOrgSettings} onSessionUpdate={onSessionUpdate} language={language} />; break;
+    default: content = <Dashboard teams={teams} reports={reports} tasks={tasks} greeting={greetingText} greetingSub={greetingSubtitle(language)} {...shared} />;
   }
 
   return <LanguageContext.Provider value={language}><div className="app-shell">
@@ -337,8 +512,8 @@ export default function App() {
         <button className={`nav-item ${activePage === 'settings' ? 'active' : ''}`} onClick={() => navigate('settings')}><Settings size={18} /><span>{t('settings')}</span></button>
         <div className="side-help"><span><HelpCircle size={18} /></span><div><strong>{t('helpTitle')}</strong><p>{t('helpText')}</p></div><ChevronRight size={15} /></div>
         <div className="profile-wrap">
-          <button className="profile" onClick={() => setProfileOpen(!profileOpen)}><Avatar name="林知夏" src="https://images.unsplash.com/photo-1580489944761-15a19d654956?w=100&h=100&fit=crop&crop=face" /><div><strong>{isEn ? 'Zhixia Lin' : '林知夏'}</strong><span>{t(`role${role[0].toUpperCase()}${role.slice(1)}`)}</span></div><MoreHorizontal size={18} /></button>
-          {profileOpen && <div className="profile-menu"><div className="profile-menu-title">{t('switchRole')}</div>{[['admin', t('roleAdmin')], ['leader', t('roleLeader')], ['member', t('roleMember')]].map(([key, label]) => <button key={key} onClick={() => { setRole(key); setProfileOpen(false); notify(isEn ? `Switched to ${label} view` : `已切换为${label}视角`); }}><span>{label}</span>{role === key && <Check size={15} />}</button>)}<hr /><button onClick={() => notify(isEn ? 'No sign-out is required in demo mode' : '演示模式下无需退出登录')}><LogOut size={15} /><span>{t('signOut')}</span></button></div>}
+          <button className="profile" onClick={() => setProfileOpen(!profileOpen)}><Avatar name={displayName} /><div><strong>{displayName}</strong><span>{roleLabel(role, isEn)}</span></div><MoreHorizontal size={18} /></button>
+          {profileOpen && <div className="profile-menu"><div className="profile-menu-title">{session.email}</div><div className="profile-menu-role">{roleLabel(role, isEn)}{session.prefs.team ? ` · ${session.prefs.team}` : ''}</div><hr /><button onClick={async () => { setProfileOpen(false); await onLogout(); }}><LogOut size={15} /><span>{t('signOut')}</span></button></div>}
         </div>
       </div>
     </aside>
@@ -379,13 +554,13 @@ export default function App() {
   </div></LanguageContext.Provider>;
 }
 
-function Dashboard({ teams, reports, tasks, navigate, setModal, exportCsv, t, isEn }) {
+function Dashboard({ teams, reports, tasks, navigate, setModal, exportCsv, t, isEn, greeting, greetingSub }) {
   const [chartMetric, setChartMetric] = useState('workload');
   const [teamFilter, setTeamFilter] = useState('全部团队');
   const shownTeams = teamFilter === '全部团队' ? teams.slice(0, 6) : teams.filter(team => team.status === teamFilter).slice(0, 6);
   const approved = reports.filter(report => report.status === '已通过').length;
   return <div className="page dashboard-page">
-    <PageTitle title={t('goodMorning')} subtitle={t('goodMorningSub')} actions={<><button className="select-button"><CalendarDays size={16} />{t('year2026')}<ChevronDown size={14} /></button><Button variant="secondary" icon={Download} onClick={() => exportCsv(isEn ? 'Annual Team Data' : '年度团队数据')}>{t('exportData')}</Button></>} />
+    <PageTitle title={greeting || t('goodMorning')} subtitle={greetingSub || t('goodMorningSub')} actions={<><button className="select-button"><CalendarDays size={16} />{t('year2026')}<ChevronDown size={14} /></button><Button variant="secondary" icon={Download} onClick={() => exportCsv(isEn ? 'Annual Team Data' : '年度团队数据')}>{t('exportData')}</Button></>} />
 
     <section className="deadline-banner">
       <div className="deadline-icon"><FileText size={22} /></div>
@@ -532,11 +707,55 @@ function AnalyticsPage({ teams, exportCsv, t, isEn, language }) {
   </div>;
 }
 
-function SettingsPage({ notify }) {
+function SettingsPage({ notify, t, isEn, session, role, orgSettings, onOrgSettings, onSessionUpdate, language }) {
   const [toggles, setToggles] = useState({ autoSave: true, leaderboard: true, monthly: true, deadline: true, points: true, review: true });
+  const [orgZh, setOrgZh] = useState(orgSettings?.zh || '');
+  const [orgEn, setOrgEn] = useState(orgSettings?.en || '');
+  const [mine, setMine] = useState(isEn ? (session?.prefs?.greetingEn || '') : (session?.prefs?.greeting || ''));
+  const [saving, setSaving] = useState(false);
   const toggle = key => setToggles(prev => ({ ...prev, [key]: !prev[key] }));
-  return <div className="page settings-page"><PageTitle title="系统设置" subtitle="管理年度、组织规则与通知偏好。" actions={<Button icon={Save} onClick={() => notify('系统设置已保存并立即生效')}>保存更改</Button>} />
-    <div className="settings-layout"><div className="settings-nav"><button className="active"><Settings size={17} />通用设置</button><button><Coins size={17} />积分规则</button><button><Bell size={17} />通知设置</button><button><ShieldCheck size={17} />角色与权限</button><button><Database size={17} />数据与备份</button></div><div className="settings-content"><section className="card settings-section"><div className="settings-title"><span><CalendarDays size={19} /></span><div><h2>年度与组织信息</h2><p>设置当前工作年度和组织基础信息</p></div></div><div className="form-grid"><Field label="组织名称"><input defaultValue="TEDxZizhuPark" /></Field><Field label="当前工作年度"><select defaultValue="2026"><option>2026</option><option>2025</option></select></Field><Field label="月报提交截止日" hint="每月"><select defaultValue="15"><option value="15">15 日 23:59</option><option value="20">20 日 23:59</option></select></Field><Field label="默认时区"><select><option>(GMT+08:00) 北京</option></select></Field></div></section>
+  useEffect(() => { setOrgZh(orgSettings?.zh || ''); setOrgEn(orgSettings?.en || ''); }, [orgSettings]);
+  useEffect(() => { setMine(isEn ? (session?.prefs?.greetingEn || '') : (session?.prefs?.greeting || '')); }, [isEn, session?.prefs?.greeting, session?.prefs?.greetingEn]);
+  const activeTemplate = (isEn ? (mine || orgEn) : (mine || orgZh)) || '';
+  const previewText = renderGreeting({ language, template: activeTemplate, name: session?.prefs?.displayName || session?.name || '' });
+  const saveGreeting = async () => {
+    if (saving) return;
+    setSaving(true);
+    try {
+      if (role === 'admin') {
+        await saveSettings({ zh: orgZh, en: orgEn });
+        onOrgSettings({ zh: orgZh, en: orgEn });
+      }
+      const prefs = await updateMyPrefs(isEn ? { greetingEn: mine } : { greeting: mine });
+      onSessionUpdate({ ...session, prefs: {
+        role: prefs.role || role,
+        team: prefs.team || session?.prefs?.team || '',
+        displayName: prefs.displayName || session?.prefs?.displayName || session?.name || '',
+        greeting: prefs.greeting || '', greetingEn: prefs.greetingEn || '',
+      }});
+      notify(t('greetingSaved'));
+    } catch {
+      notify(isEn ? 'Could not save. Please try again.' : '保存失败，请稍后重试');
+    }
+    setSaving(false);
+  };
+  return <div className="page settings-page"><PageTitle title={t('settingsTitle')} subtitle={t('settingsSubtitle')} actions={<Button icon={Save} onClick={() => notify(isEn ? 'Settings saved' : '系统设置已保存并立即生效')}>{t('saveChanges')}</Button>} />
+    <div className="settings-layout"><div className="settings-nav"><button className="active"><Settings size={17} />{t('generalSettings')}</button><button><Coins size={17} />{t('pointsRules')}</button><button><Bell size={17} />{t('notificationSettings')}</button><button><ShieldCheck size={17} />{t('rolePermissions')}</button><button><Database size={17} />{t('dataBackup')}</button></div><div className="settings-content">
+      <section className="card settings-section greeting-section"><div className="settings-title"><span><Sparkles size={19} /></span><div><h2>{t('greetingTitle')}</h2><p>{t('greetingSub')}</p></div></div>
+        <div className="greeting-preview"><small>{t('greetingPreview')}</small><strong>{previewText}</strong></div>
+        <div className="form-grid">
+          <Field label={t('greetingOrgZh')} full><input value={orgZh} disabled={role !== 'admin'} onChange={e => setOrgZh(e.target.value)} placeholder="{time}，{name}。" /></Field>
+          <Field label={t('greetingOrgEn')} full><input value={orgEn} disabled={role !== 'admin'} onChange={e => setOrgEn(e.target.value)} placeholder="{time}, {name}." /></Field>
+          <Field label={t('greetingPersonal')} hint={t('greetingPersonalHint')} full><input value={mine} onChange={e => setMine(e.target.value)} placeholder={isEn ? 'Welcome back, {name}!' : '欢迎回来，{name}！'} /></Field>
+        </div>
+        <p className="greeting-hint"><Info size={15} /><span>{t('greetingPlaceholders')} · {t('greetingAutoNote')}</span></p>
+        <div className="greeting-actions"><Button icon={Save} onClick={saveGreeting} disabled={saving}>{saving ? t('signInLoading') : t('greetingSave')}</Button><Button variant="secondary" onClick={() => { setOrgZh(''); setOrgEn(''); setMine(''); }}>{t('greetingReset')}</Button></div>
+      </section>
+      <section className="card settings-section"><div className="settings-title"><span><ShieldCheck size={19} /></span><div><h2>{t('accountTitle')}</h2><p>{t('accountSub')}</p></div></div>
+        <div className="account-info-grid"><div><span>{t('accountEmail')}</span><strong>{session?.email}</strong></div><div><span>{t('accountRole')}</span><strong>{roleLabel(role, isEn)}</strong></div><div><span>{t('accountTeam')}</span><strong>{session?.prefs?.team || '—'}</strong></div></div>
+        <p className="greeting-hint"><Info size={15} /><span>{t('accountProvision')}</span></p>
+      </section>
+      <section className="card settings-section"><div className="settings-title"><span><CalendarDays size={19} /></span><div><h2>年度与组织信息</h2><p>设置当前工作年度和组织基础信息</p></div></div><div className="form-grid"><Field label="组织名称"><input defaultValue="TEDxZizhuPark" /></Field><Field label="当前工作年度"><select defaultValue="2026"><option>2026</option><option>2025</option></select></Field><Field label="月报提交截止日" hint="每月"><select defaultValue="15"><option value="15">15 日 23:59</option><option value="20">20 日 23:59</option></select></Field><Field label="默认时区"><select><option>(GMT+08:00) 北京</option></select></Field></div></section>
       <section className="card settings-section"><div className="settings-title"><span><SlidersHorizontal size={19} /></span><div><h2>功能偏好</h2><p>根据组织习惯调整平台行为</p></div></div><SettingToggle title="月报自动保存" description="填写过程中自动保存草稿，避免内容丢失" value={toggles.autoSave} onChange={() => toggle('autoSave')} /><SettingToggle title="展示年度积分排行榜" description="允许成员查看年度个人和团队积分榜" value={toggles.leaderboard} onChange={() => toggle('leaderboard')} /></section>
       <section className="card settings-section"><div className="settings-title"><span><Bell size={19} /></span><div><h2>站内通知</h2><p>选择你希望接收的组织动态</p></div></div><SettingToggle title="填报周期开始提醒" description="每月 1 日向组长发送填报通知" value={toggles.monthly} onChange={() => toggle('monthly')} /><SettingToggle title="月报截止提醒" description="截止前 3 天提醒尚未提交的组长" value={toggles.deadline} onChange={() => toggle('deadline')} /><SettingToggle title="积分到账通知" description="积分审核入账后及时通知成员" value={toggles.points} onChange={() => toggle('points')} /></section>
     </div></div>
