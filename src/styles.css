@@ -433,3 +433,10 @@
 .login-feishu svg:first-child{color:#3370ff}
 .login-feishu svg:last-child{margin-left:auto;color:#a3a39d}
 @media(max-width:420px){.login-feishu{font-size:13.5px;padding:12px 14px}}
+
+/* ==== Member contribution heatmap (real data) ==== */
+.contribution-calendar i.future{opacity:.35}
+.member-tab-body{padding:2px 0}
+.member-tab-body .table-card{box-shadow:none;border:1px solid #eee}
+.member-tab-body .table-toolbar{padding:12px 16px}
+.member-tab-body .local-search{font-size:13px;color:#6b6b66}

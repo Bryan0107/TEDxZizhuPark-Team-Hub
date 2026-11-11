@@ -1,0 +1,33 @@
+# 飞书长连接客户端 systemd 单元（Linux 服务器用，替代 macOS launchd）。
+#
+# 使用方法：
+#   1) 把下面路径里的 /opt/tedxzizhupark-team-hub 改成你服务器上的真实项目目录
+#   2) 确认 node 路径（用 `which node` 查看，常见 /usr/bin/node 或 /usr/local/bin/node）
+#   3) 确保项目目录下有 .env.local（含 FEISHU_APP_ID / FEISHU_APP_SECRET / APPWRITE_* 等 secrets）
+#   4) 安装：
+#        sudo cp scripts/feishu-ws.service /etc/systemd/system/
+#        sudo systemctl daemon-reload
+#        sudo systemctl enable --now feishu-ws
+#   5) 查看状态/日志：
+#        sudo systemctl status feishu-ws
+#        sudo journalctl -u feishu-ws -f
+
+[Unit]
+Description=TEDxZizhuPark Feishu WebSocket event client
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+WorkingDirectory=/opt/tedxzizhupark-team-hub
+# 仅 1 个实例：WebSocket 长连接不能多开，否则事件重复处理
+ExecStart=/usr/bin/node --env-file=/opt/tedxzizhupark-team-hub/.env.local /opt/tedxzizhupark-team-hub/scripts/feishu-ws-client.mjs
+Restart=always
+RestartSec=10
+User=root
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=feishu-ws
+
+[Install]
+WantedBy=multi-user.target

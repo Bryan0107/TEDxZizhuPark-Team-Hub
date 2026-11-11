@@ -625,7 +625,7 @@ function MainApp({ session, onLogout, onSessionUpdate, language, setLanguage }) 
       closeModal(); notify(submit ? '月报已提交，审核结果将通过站内通知告知' : '月报草稿已保存');
       if (submit) notifyFeishu('workload.submitted', { title: '月度工作量已提交', summary: '组长提交了本月团队月报，等待审核。', fields: [['团队', modal.data?.team || data.team || '—'], ['月份', modal.data?.month || data.month || '—'], ['任务数', data.tasks ?? modal.data?.tasks ?? 0], ['状态', '待审核']] });
     }} />}
-    {modal?.type === 'memberDetail' && <MemberDetail member={modal.data} onClose={closeModal} exportCsv={exportCsv} />}
+    {modal?.type === 'memberDetail' && <MemberDetail member={modal.data} onClose={closeModal} exportCsv={exportCsv} transactions={transactions} isEn={isEn} language={language} />}
     {modal?.type === 'newMember' && <MemberForm onClose={closeModal} onSave={member => { setMembers(prev => [...prev, { ...member, id: Date.now(), points: 0, monthPoints: 0, tasks: 0, events: 0, status: '正常' }]); closeModal(); notify(`已邀请 ${member.name} 加入 Team Hub`); }} />}
     {modal?.type === 'reserveForm' && <ReserveForm isEn={isEn} onClose={closeModal} onSave={form => { setReserves(prev => [{ ...form, id: Date.now(), created: new Date().toLocaleDateString('zh-CN') }, ...prev]); closeModal(); notify(isEn ? 'Added to the reserve volunteer roster' : '已加入后备现场志愿者档案'); }} />}
     {modal?.type === 'pointsAdjust' && <PointsAdjust members={members} onClose={closeModal} onSave={tx => {
@@ -763,18 +763,21 @@ function TeamsPage({ teams, setModal, navigate, t, isEn }) {
   </div>;
 }
 
-function MembersPage({ members, setMembers, reserves, setReserves, setModal, exportCsv, notify, t, isEn, language }) {
+function MembersPage({ members, setMembers, reserves, setReserves, setModal, exportCsv, notify, navigate, t, isEn, language }) {
   const L = (zh, en) => isEn ? en : zh;
   const [tab, setTab] = useState('active');
   const [query, setQuery] = useState('');
   const [status, setStatus] = useState('全部成员');
   const [reserveQuery, setReserveQuery] = useState('');
   const [availability, setAvailability] = useState('全部');
-  const filtered = members.filter(m => `${m.name}${m.english || ''}${m.team || ''}`.toLowerCase().includes(query.toLowerCase()) && (status === '全部成员' || m.status === status));
+  const activeMembers = members.filter(m => m.member_status === 'active');
+  const alumniMembers = members.filter(m => m.member_status !== 'active');
+  const filtered = activeMembers.filter(m => `${m.name}${m.english || ''}${m.team || ''}`.toLowerCase().includes(query.toLowerCase()) && (status === '全部成员' || m.status === status));
+  const filteredAlumni = alumniMembers.filter(m => `${m.name}${m.english || ''}${m.team || ''}`.toLowerCase().includes(query.toLowerCase()));
   const filteredReserves = reserves.filter(r => `${r.name}${r.english || ''}${r.previous_team || ''}${r.years || ''}`.toLowerCase().includes(reserveQuery.toLowerCase()) && (availability === '全部' || r.availability === availability));
-  const memberFilters = [['全部成员', t('allMembers')], ['活跃', displayValue('活跃', language)], ['正常', displayValue('正常', language)]];
-  const activeCount = members.filter(m => m.status === '活跃').length;
-  const participation = members.length ? Math.round(activeCount / members.length * 100) : 0;
+  const memberFilters = [['全部成员', t('allMembers')], ['正常', displayValue('正常', language)]];
+  const activeCount = activeMembers.filter(m => m.status === '正常').length;
+  const participation = activeMembers.length ? Math.round(activeCount / activeMembers.length * 100) : 0;
   const removeReserve = id => {
     removeRow('reserve_volunteers', id);
     setReserves(prev => prev.filter(r => r.id !== id));
@@ -787,13 +790,23 @@ function MembersPage({ members, setMembers, reserves, setReserves, setModal, exp
       : <><Button variant="secondary" icon={Download} onClick={() => exportCsv('后备现场志愿者')}>{L('导出后备名录', 'Export reserve list')}</Button><Button icon={UserPlus} onClick={() => setModal({ type: 'reserveForm' })}>{L('添加后备志愿者', 'Add reserve volunteer')}</Button></>} />
 
     <div className="member-section-tabs">
-      <button className={tab === 'active' ? 'active' : ''} onClick={() => setTab('active')}><Users size={16} />{L('在编策展成员', 'Active Curation Team')}<span>{members.length}</span></button>
+      <button className={tab === 'active' ? 'active' : ''} onClick={() => setTab('active')}><Users size={16} />{L('在编策展成员', 'Active Curation Team')}<span>{activeMembers.length}</span></button>
+      <button className={tab === 'alumni' ? 'active' : ''} onClick={() => setTab('alumni')}><UsersRound size={16} />{L('历届成员', 'Alumni Archive')}<span>{alumniMembers.length}</span></button>
       <button className={tab === 'reserve' ? 'active' : ''} onClick={() => setTab('reserve')}><History size={16} />{L('后备现场志愿者', 'Reserve On-site Volunteers')}<span>{reserves.length}</span></button>
     </div>
 
     {tab === 'active' ? <>
-      <div className="member-insights"><div><span className="metric-icon red"><Users size={20} /></span><div><strong>{members.length}</strong><p>{t('memberCount')}</p></div><small>{L('当前在编名册', 'Current roster')}</small></div><div><span className="metric-icon green"><Activity size={20} /></span><div><strong>{participation}%</strong><p>{t('participationRate')}</p></div><small>{activeCount} {L('位活跃成员', 'active members')}</small></div><div><span className="metric-icon blue"><History size={20} /></span><div><strong>{reserves.length}</strong><p>{t('alumniProfiles')}</p></div><small>{L('后备现场志愿者档案', 'Reserve volunteer roster')}</small></div></div>
+      <div className="member-insights"><div><span className="metric-icon red"><Users size={20} /></span><div><strong>{activeMembers.length}</strong><p>{t('memberCount')}</p></div><small>{L('当前在编名册', 'Current roster')}</small></div><div><span className="metric-icon green"><Activity size={20} /></span><div><strong>{participation}%</strong><p>{t('participationRate')}</p></div><small>{activeCount} {L('位活跃成员', 'active members')}</small></div><div><span className="metric-icon blue"><History size={20} /></span><div><strong>{alumniMembers.length}</strong><p>{L('历届成员归档', 'Alumni Archived')}</p></div><small>{L('已存档至十周年纪念馆', 'Archived in Hall of Honor')}</small></div></div>
       <div className="card table-card"><div className="table-toolbar"><div className="filter-tabs">{memberFilters.map(([key, label]) => <button className={status === key ? 'active' : ''} onClick={() => setStatus(key)} key={key}>{label}</button>)}</div><div className="toolbar-right"><div className="local-search"><Search size={16} /><input placeholder={t('searchMembers')} value={query} onChange={e => setQuery(e.target.value)} /></div><button className="icon-button bordered"><SlidersHorizontal size={17} /></button></div></div><div className="table-wrap"><table className="data-table member-table"><thead><tr><th>{t('member')}</th><th>{t('assignedTeam')}</th><th>{t('role')}</th><th>{t('joinedAt')}</th><th>{t('annualTasks')}</th><th>{t('points')}</th><th>{t('participationStatus')}</th><th /></tr></thead><tbody>{filtered.map(m => <tr key={m.id} onClick={() => setModal({ type: 'memberDetail', data: m })}><td><div className="member-cell"><Avatar name={m.name} src={m.avatar} /><div><strong>{m.name}<span>{m.english}</span></strong><small>{m.email}</small></div></div></td><td>{m.team}</td><td><span className={m.role === '组长' ? 'role-tag leader' : 'role-tag'}>{displayValue(m.role, language)}</span></td><td className="muted">{m.joined}</td><td>{m.tasks} {isEn ? 'tasks' : '项'}</td><td><strong className="points-number">{m.points}</strong><span className="table-sub"> {isEn ? 'pts' : '分'}</span><small className="points-month">{isEn ? `This month +${m.monthPoints}` : `本月 +${m.monthPoints}`}</small></td><td><StatusBadge>{m.status}</StatusBadge></td><td><ChevronRight size={16} className="muted" /></td></tr>)}</tbody></table>{!filtered.length && <EmptyState title={isEn ? 'No active members yet' : '暂无在编成员'} description={isEn ? 'Add members to build the curation team roster.' : '点击右上角「添加成员」建立本年度策展团队名册。'} />}</div><div className="table-footer"><span>{isEn ? `${filtered.length} active members` : `显示 ${filtered.length} 位在编成员`}</span></div></div>
+    </> : tab === 'alumni' ? <>
+      <section className="card reserve-intro"><div className="settings-title"><span><History size={19} /></span><div><h2>{L('历届成员归档', 'Alumni Archive')}</h2><p>{L('过往策展团队成员，已存档至十周年纪念馆', 'Former curation team members, archived in the Hall of Honor')}</p></div></div>
+        <p className="greeting-hint"><Info size={15} /><span>{L('这些成员已标记为「历届」，不再计入本年度在编名册、团队编制与积分排名；其历史贡献已永久保存在十周年纪念馆（公开页 /hall-of-honor），不会被删除。', 'These members are marked as alumni — excluded from the active roster, team headcount and points rankings — but their historical contributions are preserved permanently in the Hall of Honor (public page /hall-of-honor).')}</span></p>
+      </section>
+      <div className="card table-card">
+        <div className="table-toolbar"><div className="local-search"><Search size={16} /><input placeholder={L('搜索姓名或团队…', 'Search name or team…')} value={query} onChange={e => setQuery(e.target.value)} /></div><button className="select-button" onClick={() => navigate('hall')}>{L('前往十周年纪念馆', 'Visit Hall of Honor')}<ArrowUpRight size={14} /></button></div>
+        <div className="table-wrap"><table className="data-table member-table"><thead><tr><th>{L('姓名', 'Name')}</th><th>{L('所属团队', 'Team')}</th><th>{L('参与身份', 'Role')}</th><th>{L('加入年份', 'Joined')}</th><th>{L('状态', 'Status')}</th></tr></thead><tbody>{filteredAlumni.map(m => <tr key={m.id}><td><div className="member-cell"><Avatar name={m.name} src={m.avatar} /><div><strong>{m.name}<span>{m.english}</span></strong><small>{m.email}</small></div></div></td><td>{m.team}</td><td><span className="role-tag">{displayValue(m.role, language)}</span></td><td className="muted">{m.joined}</td><td><StatusBadge tone="gray">{L('历届', 'Alumni')}</StatusBadge></td></tr>)}</tbody></table>{!filteredAlumni.length && <EmptyState title={isEn ? 'No archived members' : '暂无归档成员'} description={isEn ? 'Members marked as alumni appear here.' : '已标记为历届的成员会显示在这里。'} />}</div>
+        <div className="table-footer"><span>{isEn ? `${filteredAlumni.length} archived · ${alumniMembers.length} total` : `显示 ${filteredAlumni.length} 位 · 归档库共 ${alumniMembers.length} 位`}</span><span>{L('历史贡献已永久保存在十周年纪念馆', 'Historical contributions preserved in Hall of Honor')}</span></div>
+      </div>
     </> : <>
       <section className="card reserve-intro"><div className="settings-title"><span><History size={19} /></span><div><h2>{L('后备现场志愿者档案', 'Reserve On-site Volunteer Roster')}</h2><p>{L('历届成员与现场支援储备，独立归档管理', 'Alumni and on-site support pool, archived separately')}</p></div></div>
         <p className="greeting-hint"><Info size={15} /><span>{L('这里存放往届参与过、但不属于长期策展团队的成员。他们作为后备现场志愿者，在大会需要人手时联系；不计入本年度活跃成员、团队编制与积分排名，也不会被删除历史贡献。', 'Former participants who are not part of the long-term curation team live here. They are contacted when on-site support is needed, and are excluded from this year\'s active roster, team headcount and points rankings. Their historical contributions are preserved.')}</span></p>
@@ -1215,9 +1228,51 @@ function ReportEditor({ report, teams, onClose, onSave }) {
   </Modal>;
 }
 
-function MemberDetail({ member, onClose, exportCsv }) {
+function txYmd(d) { return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`; }
+function txNormalizeDate(s) {
+  if (!s) return txYmd(new Date());
+  if (/^\s*(刚刚|just now)\s*$/i.test(s)) return txYmd(new Date());
+  const iso = String(s).match(/(\d{4})[-/](\d{1,2})[-/](\d{1,2})/);
+  if (iso) return `${iso[1]}-${String(iso[2]).padStart(2, '0')}-${String(iso[3]).padStart(2, '0')}`;
+  const cn = String(s).match(/(\d{1,2})月(\d{1,2})[日号]/);
+  if (cn) return `${new Date().getFullYear()}-${String(cn[1]).padStart(2, '0')}-${String(cn[2]).padStart(2, '0')}`;
+  return txYmd(new Date());
+}
+function txLevel(p) { if (p <= 0) return 0; if (p <= 2) return 1; if (p <= 5) return 2; if (p <= 9) return 3; return 4; }
+function txFmtDate(s) {
+  const iso = String(s || '').match(/(\d{4})[-/](\d{1,2})[-/](\d{1,2})/);
+  if (iso) return `${Number(iso[2])}月${Number(iso[3])}日`;
+  return s || '—';
+}
+function MemberDetail({ member, transactions = [], onClose, exportCsv, isEn, language }) {
   const [tab, setTab] = useState('贡献概览');
-  return <Modal title="成员档案" subtitle={`Member ID · TEDx-${String(member.id).padStart(4, '0')}`} onClose={onClose} size="lg" footer={<><Button variant="secondary" onClick={onClose}>关闭</Button><Button variant="secondary" icon={Download} onClick={() => exportCsv(`${member.name}年度贡献报告`)}>导出贡献报告</Button></>}><div className="member-profile-hero"><Avatar name={member.name} src={member.avatar} size="xl" /><div><h2>{member.name}<span>{member.english}</span></h2><p>{member.team} · {member.role}</p><div><StatusBadge>{member.status}</StatusBadge><span><CalendarDays size={14} />加入于 {member.joined}</span></div></div><button className="icon-button bordered"><Pencil size={17} /></button></div><div className="member-detail-stats"><div><strong>{member.points}</strong><span>年度累计积分</span></div><div><strong>{member.tasks}</strong><span>年度完成任务</span></div><div><strong>{member.events}</strong><span>参与活动次数</span></div><div><strong>{member.monthPoints}</strong><span>本月新增积分</span></div></div><div className="review-tabs">{['贡献概览', '参与记录', '积分明细', '档案信息'].map(t => <button className={tab === t ? 'active' : ''} key={t} onClick={() => setTab(t)}>{t}</button>)}</div>{tab === '贡献概览' ? <div className="member-contribution-overview"><h3>2026 年贡献轨迹</h3><div className="contribution-calendar">{Array.from({ length: 70 }).map((_, i) => <i key={i} className={`level-${(i * 7 + (Number(member.id) || 1)) % 5}`} />)}</div><div className="contribution-caption"><span>过去 10 周参与记录</span><span>少 <i className="level-1" /><i className="level-2" /><i className="level-3" /><i className="level-4" /> 多</span></div><h3>近期主要贡献</h3><div className="simple-timeline"><div><i /><span>11月08日</span><p><strong>完成年度大会核心内容策划</strong>任务贡献 · +10 分</p></div><div><i /><span>11月02日</span><p><strong>参加十一月团队例会</strong>基础参与 · +2 分</p></div><div><i /><span>10月26日</span><p><strong>跨组支持讲者传播内容</strong>组织贡献 · +3 分</p></div></div></div> : <div className="profile-info-list">{[['所属团队', member.team], ['担任职务', member.role], ['联系邮箱', member.email], ['加入时间', member.joined], ['成员状态', member.status], ['历史参与年度', '2024、2025、2026']].map(([l, v]) => <div key={l}><span>{l}</span><strong>{v}</strong></div>)}</div>}</Modal>;
+  const L = (zh, en) => isEn ? en : zh;
+  // 仅取该成员的真实积分流水，避免同名或演示数据串味。
+  const myTx = useMemo(() => (transactions || []).filter(tx => tx && tx.member === member.name), [transactions, member.name]);
+  const totalPoints = myTx.reduce((s, tx) => s + (Number(tx.points) || 0), 0);
+  // GitHub 式贡献轨迹：按日期聚合真实流水，最近 10 周（70 天），对齐到周日开头。
+  const heatmap = useMemo(() => {
+    const byDate = {};
+    for (const tx of myTx) {
+      const key = txNormalizeDate(tx.date);
+      byDate[key] = (byDate[key] || 0) + (Number(tx.points) || 0);
+    }
+    const WEEKS = 10;
+    const today = new Date(); today.setHours(0, 0, 0, 0);
+    const start = new Date(today);
+    start.setDate(today.getDate() - today.getDay() - (WEEKS - 1) * 7);
+    const cells = [];
+    for (let i = 0; i < WEEKS * 7; i++) {
+      const d = new Date(start); d.setDate(start.getDate() + i);
+      const key = txYmd(d);
+      const pts = byDate[key] || 0;
+      cells.push({ key, points: pts, level: txLevel(pts), future: d > today });
+    }
+    return cells;
+  }, [myTx]);
+  const recent = useMemo(() => [...myTx].sort((a, b) => txNormalizeDate(b.date).localeCompare(txNormalizeDate(a.date))).slice(0, 6), [myTx]);
+  const ledger = useMemo(() => [...myTx].sort((a, b) => txNormalizeDate(b.date).localeCompare(txNormalizeDate(a.date))), [myTx]);
+  return <Modal title="成员档案" subtitle={`Member ID · TEDx-${String(member.id).padStart(4, '0')}`} onClose={onClose} size="lg" footer={<><Button variant="secondary" onClick={onClose}>关闭</Button><Button variant="secondary" icon={Download} onClick={() => exportCsv(`${member.name}年度贡献报告`)}>导出贡献报告</Button></>}><div className="member-profile-hero"><Avatar name={member.name} src={member.avatar} size="xl" /><div><h2>{member.name}<span>{member.english}</span></h2><p>{member.team} · {member.position || member.role}</p><div><StatusBadge>{member.status}</StatusBadge><span><CalendarDays size={14} />加入于 {member.joined}</span></div></div><button className="icon-button bordered"><Pencil size={17} /></button></div><div className="member-detail-stats"><div><strong>{member.points}</strong><span>年度累计积分</span></div><div><strong>{member.tasks}</strong><span>年度完成任务</span></div><div><strong>{member.events}</strong><span>参与活动次数</span></div><div><strong>{member.monthPoints}</strong><span>本月新增积分</span></div></div><div className="review-tabs">{['贡献概览', '参与记录', '积分明细', '档案信息'].map(t => <button className={tab === t ? 'active' : ''} key={t} onClick={() => setTab(t)}>{t}</button>)}</div>{tab === '贡献概览' ? <div className="member-contribution-overview"><h3>2026 年贡献轨迹</h3><div className="contribution-calendar">{heatmap.map(c => <i key={c.key} className={`level-${c.level}${c.future ? ' future' : ''}`} title={`${c.key} · ${c.points} ${L('分', 'pts')}`} />)}</div><div className="contribution-caption"><span>过去 10 周参与记录</span><span>少 <i className="level-1" /><i className="level-2" /><i className="level-3" /><i className="level-4" /> 多</span></div><h3>{L('近期主要贡献', 'Recent Contributions')}</h3>{recent.length ? <div className="simple-timeline">{recent.map((tx, i) => <div key={i}><i /><span>{txFmtDate(tx.date)}</span><p><strong>{tx.source}</strong>{tx.type} · {tx.points > 0 ? '+' : ''}{tx.points} {L('分', 'pts')}</p></div>)}</div> : <EmptyState title={L('暂无积分流水', 'No transactions yet')} description={L('该成员暂未产生积分流水，贡献轨迹将在积分入账后自动生成。', 'Contribution trail will appear once points are recorded.')} />}</div> : tab === '参与记录' ? <div className="member-tab-body">{myTx.length ? <div className="simple-timeline">{[...myTx].sort((a, b) => txNormalizeDate(b.date).localeCompare(txNormalizeDate(a.date))).map((tx, i) => <div key={i}><i /><span>{txFmtDate(tx.date)}</span><p><strong>{tx.source}</strong>{tx.type} · {tx.points > 0 ? '+' : ''}{tx.points} {L('分', 'pts')}</p></div>)}</div> : <EmptyState title={L('暂无参与记录', 'No participation records')} description={L('该成员的积分流水为空，参与记录将在积分入账后显示。', 'Participation records appear once points are recorded.')} />}</div> : tab === '积分明细' ? <div className="member-tab-body"><div className="card table-card"><div className="table-toolbar"><div className="local-search"><span>{L('合计', 'Total')}：<strong className="points-number">{totalPoints}</strong> {L('分', 'pts')}</span></div></div><div className="table-wrap"><table className="data-table"><thead><tr><th>{L('日期', 'Date')}</th><th>{L('来源', 'Source')}</th><th>{L('类型', 'Type')}</th><th>{L('团队', 'Team')}</th><th>{L('积分', 'Points')}</th><th>{L('状态', 'Status')}</th></tr></thead><tbody>{ledger.map((tx, i) => <tr key={i}><td className="muted">{txFmtDate(tx.date)}</td><td><strong>{tx.source}</strong></td><td><StatusBadge>{tx.type}</StatusBadge></td><td>{tx.team || '—'}</td><td><strong className={Number(tx.points) >= 0 ? 'positive-points' : 'negative-points'}>{Number(tx.points) > 0 ? '+' : ''}{tx.points}</strong></td><td><StatusBadge>{tx.status}</StatusBadge></td></tr>)}</tbody></table>{!ledger.length && <EmptyState title={L('暂无积分明细', 'No points ledger')} description={L('该成员暂未产生积分流水。', 'No point transactions for this member yet.')} />}</div></div></div> : <div className="profile-info-list">{[['所属团队', member.team || '—'], ['担任职务', member.position || '—'], ['联系邮箱', member.email || '—'], ['成员状态', member.status || '—'], ['加入时间', member.joined || '—'], [L('数据来源', 'Data source'), member.feishu_open_id ? L('飞书通讯录同步', 'Feishu contact sync') : L('手动录入', 'Manual entry')]].map(([l, v]) => <div key={l}><span>{l}</span><strong>{v}</strong></div>)}</div>}</Modal>;
 }
 
 function MemberForm({ onClose, onSave }) {

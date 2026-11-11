@@ -127,6 +127,7 @@ const main = async () => {
     ['feishu_union_id', 'string', 64],
     ['feishu_user_id', 'string', 64],
     ['nickname', 'string', 64],
+    ['position', 'string', 64],
     ['avatar_72', 'string', 512],
     ['avatar_240', 'string', 512],
     ['avatar_640', 'string', 512],

@@ -43,8 +43,9 @@ const mapLimit = async (items, limit, fn) => {
 };
 
 /**
- * 飞书部门 → Team Hub 四个职能组。
- * 「储备策展团队」不是当期在编成员，按用户要求单独进入后备现场志愿者档案。
+ * 飞书部门 → 团队名的正则兜底（仅在部门树不可用时使用）。
+ * 正常情况下团队名直接使用飞书真实顶层部门（见 runSync 中的 teamFor）。
+ * 「储备策展团队」不是当期在编成员，单独进入后备现场志愿者档案。
  */
 const DEPT_TEAM_RULES = [
   [/内容|content/i, '内容组'],
@@ -114,6 +115,23 @@ export async function runSync(mode = 'incremental', { actor = 'system', notify =
       }
     }
 
+    // 部门父子关系 + 顶层分组解析（把成员部门映射到飞书真实顶层团队，而非硬编码 4 组）。
+    const deptParentById = new Map();
+    for (const d of depts.items) if (d.open_department_id) deptParentById.set(d.open_department_id, d.parent_department_id || '0');
+    const resolveTopGroup = (openDeptId) => {
+      let cur = openDeptId;
+      const seen = new Set();
+      while (cur && !seen.has(cur)) {
+        seen.add(cur);
+        const parent = deptParentById.get(cur);
+        if (!parent || parent === '0' || !deptParentById.has(parent)) break;
+        cur = parent;
+      }
+      return deptNameById.get(cur) || '';
+    };
+    // 团队名优先用飞书真实顶层部门；部门树不可用时退回正则推断，保证不空。
+    const teamFor = (deptId) => resolveTopGroup(deptId) || mapDeptToTeam(deptNameById.get(deptId) || '');
+
     // 现有成员-部门关联（避免每次同步重复写）
     const pendingLinks = [];
     let existingLinks = new Set();
@@ -164,14 +182,16 @@ export async function runSync(mode = 'incremental', { actor = 'system', notify =
         if (member) {
           const changed = diffFields(member, incoming);
           const patch = { ...incoming };
-          // 不覆盖已有业务字段：团队归属、积分、加入时间、成员状态由 Team Hub 自己管。
-          delete patch.team;
+          // 团队 / 职务以飞书真实部门结构为准（用户要求与实际一致，不再统一写「策展团队」）。
+          const realTeam = teamFor(deptIds[0]);
+          if (realTeam) patch.team = realTeam;
+          if (incoming.position) patch.position = incoming.position;
+          // 团队 / 职务 / 邮箱属于身份字段：即使其它字段未变，只要这些字段有差异也要落库，
+          // 否则已存在成员（按 open_id 匹配且无其它字段变化）的团队/职务/邮箱永远不会被刷新。
+          const teamChanged = realTeam && realTeam !== (member.team || '');
+          const positionChanged = Boolean(incoming.position) && incoming.position !== (member.position || '');
+          const emailChanged = Boolean(incoming.email) && incoming.email !== (member.email || '');
           if (!member.member_status) patch.member_status = member.status === '历届成员' ? 'alumni' : 'active';
-          // 仅在团队为空时按飞书部门推断，绝不覆盖管理员手工设置的团队
-          if (!member.team) {
-            const guessed = mapDeptToTeam(deptNames[0] || '');
-            if (guessed) patch.team = guessed;
-          }
           if (member.is_login_enabled === undefined || member.is_login_enabled === null) {
             patch.is_login_enabled = member.member_status !== 'alumni' && member.member_status !== 'inactive';
           }
@@ -180,7 +200,7 @@ export async function runSync(mode = 'incremental', { actor = 'system', notify =
             patch.sync_state = 'synced';
             report.reactivated = (report.reactivated || 0) + 1;
           }
-          if (changed.length || linkedBy !== 'open_id' || member.sync_state === 'pending_leave') {
+          if (changed.length || teamChanged || positionChanged || emailChanged || linkedBy !== 'open_id' || member.sync_state === 'pending_leave') {
             await upsert('members', member.id, patch);
             report.updated++;
             report.updatedUsers.push({ id: member.id, name: incoming.name, changed, linkedBy: linkedBy === 'open_id' ? undefined : linkedBy });
@@ -205,7 +225,8 @@ export async function runSync(mode = 'incremental', { actor = 'system', notify =
             totalPoints: 0,
             tasks: 0,
             events: 0,
-            team: mapDeptToTeam(deptNames[0] || ''),
+            team: teamFor(deptIds[0]),
+            position: incoming.position || '',
             joined: profile.join_date || `${year}.${String(new Date().getMonth() + 1).padStart(2, '0')}`,
             first_join_year: Number(String(profile.join_date || year).slice(0, 4)) || year,
           };

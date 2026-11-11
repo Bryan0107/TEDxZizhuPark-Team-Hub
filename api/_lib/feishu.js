@@ -265,6 +265,7 @@ export function mapFeishuUser(u) {
     feishu_union_id: u.union_id || '',
     feishu_user_id: u.user_id || '',
     nickname: u.nickname || '',
+    position: (u.job_title || '').trim(),
     avatar_72: avatar.avatar_72,
     avatar_240: avatar.avatar_240,
     avatar_640: avatar.avatar_640,

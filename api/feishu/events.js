@@ -11,14 +11,22 @@
  * - 校验 Verification Token
  * - 事件幂等（event_id 去重）
  * - 失败不影响已有数据
+ *
+ * 关键：飞书要求回调在 3 秒内响应，否则控制台报「请求3秒超时」。
+ * 本端点采用「先回 200、再后台处理」模式：
+ *   - 解密 + 验签（纯加密运算，毫秒级）在响应前同步完成，非法请求直接 403；
+ *   - 真正的业务处理（拉取飞书、写库、发通知）放到后台，用 waitUntil 延命，
+ *     保证函数实例在后台任务结束前不被冻结（Vercel 不支持响应后继续跑普通异步）。
  */
 import { decryptEvent, verifyEventToken } from '../_lib/feishu.js';
 
-/**
- * 飞书要求回调地址在 3 秒内响应，否则控制台会报「请求3秒超时」。
- * 因此 URL Verification 路径**不得**加载 Appwrite SDK：
- * store.js / notify.js / event-handler.js（依赖 node-appwrite）全部改为用时再 import。
- */
+// Vercel 后台任务延命；非 Vercel 环境（本地 dev）降级为 await。
+let waitUntil = null;
+try {
+  const mod = await import('@vercel/functions');
+  waitUntil = mod.waitUntil || null;
+} catch { /* 本地或非 Vercel：用 await 兜底 */ }
+
 const handlerModule = () => import('../_lib/event-handler.js');
 
 export const config = { maxDuration: 30 };
@@ -30,7 +38,7 @@ export default async function handler(req, res) {
   if (typeof body === 'string') { try { body = JSON.parse(body); } catch { body = null; } }
   if (!body) return res.status(400).json({ code: 400, msg: 'invalid json' });
 
-  // 1) 加密事件先解密
+  // 1) 加密事件先解密（仅 AES，毫秒级，不碰网络）
   let payload = body;
   if (body.encrypt) {
     try {
@@ -40,41 +48,49 @@ export default async function handler(req, res) {
     }
   }
 
-  // 2) URL Verification —— 关键路径，不触碰数据库，尽快返回
+  // 2) URL Verification —— 纯内存运算，立即回 challenge，绝不碰数据库
   if (payload.type === 'url_verification' || payload.challenge) {
-    const started = Date.now();
     const check = verifyEventToken(payload.token);
     if (!check.ok) return res.status(403).json({ code: 403, msg: 'invalid verification token' });
-    console.log('[feishu-events] url_verification ok in', Date.now() - started, 'ms');
     return res.status(200).json({ challenge: payload.challenge });
   }
 
   const header = payload.header || {};
 
-  // 3) token 校验（必须在进入业务逻辑前完成）
+  // 3) 验签（纯加密运算，毫秒级）—— 非法请求同步拒绝，不用进后台
   const check = verifyEventToken(header.token || payload.token);
   if (!check.ok) {
-    const { logEvent } = await import('../_lib/store.js');
-    await logEvent({
-      event_id: header.event_id || undefined,
-      event_type: header.event_type || 'unknown',
-      status: 'rejected',
-      received_at: new Date().toISOString(),
-      error: 'invalid verification token',
-      payload: JSON.stringify(payload).slice(0, 1800),
-    }).catch(() => null);
-    return res.status(403).json({ code: 403, msg: 'invalid token' });
+    const reject = (async () => {
+      try {
+        const { logEvent } = await import('../_lib/store.js');
+        await logEvent({
+          event_id: header.event_id || undefined,
+          event_type: header.event_type || 'unknown',
+          status: 'rejected',
+          received_at: new Date().toISOString(),
+          error: 'invalid verification token',
+          payload: JSON.stringify(payload).slice(0, 1800),
+        }).catch(() => null);
+      } catch { /* 记日志失败不影响主流程 */ }
+    })();
+    res.status(403).json({ code: 403, msg: 'invalid token' });
+    if (waitUntil) waitUntil(reject); else await reject;
+    return;
   }
 
-  // 4) 业务处理（失败也返回 200，避免飞书反复重推）
-  try {
-    const { handleFeishuEvent } = await handlerModule();
-    const result = await handleFeishuEvent(payload, { source: 'webhook' });
-    if (result.status === 'duplicate') return res.status(200).json({ code: 0, msg: 'duplicate ignored' });
-    if (result.status === 'failed') return res.status(200).json({ code: 0, msg: 'accepted with error', detail: result.error });
-    return res.status(200).json({ code: 0, msg: 'success' });
-  } catch (err) {
-    console.error('[feishu-events] handle failed', err);
-    return res.status(200).json({ code: 0, msg: 'accepted with error', detail: err.message });
-  }
+  // 4) 关键：立即回 200，飞书停止计时；业务处理全部放到后台
+  res.status(200).json({ code: 0, msg: 'accepted' });
+
+  const work = (async () => {
+    try {
+      const { handleFeishuEvent } = await handlerModule();
+      const result = await handleFeishuEvent(payload, { source: 'webhook' });
+      console.log('[feishu-events] handled', result?.status, result?.eventType, result?.eventId);
+    } catch (err) {
+      console.error('[feishu-events] background handle failed', err);
+    }
+  })();
+
+  if (waitUntil) waitUntil(work);
+  else await work;
 }

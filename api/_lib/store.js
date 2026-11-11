@@ -44,7 +44,7 @@ export const MEMBER_COLUMNS = [
   'name', 'english', 'email', 'avatar', 'team', 'role', 'status', 'joined', 'bio', 'points',
   'monthPoints', 'totalPoints', 'tasks', 'events', 'years', 'first_join_year', 'member_status',
   'public_visibility', 'authorization_status', 'introduction',
-  'feishu_open_id', 'feishu_union_id', 'feishu_user_id', 'nickname',
+  'feishu_open_id', 'feishu_union_id', 'feishu_user_id', 'nickname', 'position',
   'avatar_72', 'avatar_240', 'avatar_640', 'avatar_origin',
   'feishu_profile', 'feishu_departments', 'is_login_enabled', 'sync_state', 'last_sync_at',
 ];
