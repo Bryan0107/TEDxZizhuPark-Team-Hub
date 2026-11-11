@@ -1,0 +1,36 @@
+name: Feishu contact sync
+
+# 每 30 分钟触发一次飞书通讯录增量同步。
+# Vercel Hobby 套餐的 Cron 只支持每天一次，因此 30 分钟级同步由本工作流驱动同一入口。
+on:
+  schedule:
+    - cron: '*/30 * * * *'
+  workflow_dispatch:
+
+concurrency:
+  group: feishu-sync
+  cancel-in-progress: false
+
+jobs:
+  sync:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Trigger incremental sync
+        env:
+          SYNC_URL: ${{ secrets.FEISHU_SYNC_URL }}
+          CRON_SECRET: ${{ secrets.FEISHU_CRON_SECRET }}
+        run: |
+          if [ -z "$SYNC_URL" ] || [ -z "$CRON_SECRET" ]; then
+            echo "::warning::FEISHU_SYNC_URL 或 FEISHU_CRON_SECRET 未配置，跳过本次同步"
+            exit 0
+          fi
+          code=$(curl -sS -o response.json -w '%{http_code}' \
+            -H "x-cron-secret: $CRON_SECRET" \
+            "$SYNC_URL/api/cron/feishu-sync?mode=incremental" || echo 000)
+          echo "HTTP $code"
+          cat response.json || true
+          if [ "$code" != "200" ]; then
+            echo "::error::飞书同步失败，HTTP $code"
+            exit 1
+          fi

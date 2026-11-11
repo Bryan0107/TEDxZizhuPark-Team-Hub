@@ -12,6 +12,7 @@
     "@vitejs/plugin-react": "latest",
     "appwrite": "^29.2.0",
     "lucide-react": "^0.468.0",
+    "node-appwrite": "^31.1.0",
     "react": "latest",
     "react-dom": "latest",
     "recharts": "^2.15.0",

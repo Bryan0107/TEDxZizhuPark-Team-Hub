@@ -19,6 +19,8 @@ import { fetchTable, syncTable, fetchSettings, saveSettings, fetchAppSetting, sa
 import HallOfHonor, { HallAdmin } from './hall';
 import './hall.css';
 import { getCurrentUser, signIn, signOut, updateMyPrefs, roleLabel } from './auth';
+import FeishuSettings from './FeishuSettings';
+import { getFeishuSession, logoutFeishu, notifyFeishu } from './feishu';
 
 const statusTone = {
   '已通过': 'green', '已入账': 'green', '已完成': 'green', '活跃': 'green', '正常': 'blue',
@@ -361,6 +363,13 @@ function LoginPage({ onLogin, language, setLanguage }) {
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [error, setError] = useState('');
+  const feishuNotice = (() => {
+    try {
+      const params = new URLSearchParams(window.location.search);
+      if (params.get('feishu') === 'error') return params.get('message') || (isEn ? 'Feishu sign-in was not completed.' : '飞书登录未通过，请联系团队管理组。');
+    } catch { /* ignore */ }
+    return '';
+  })();
   const [busy, setBusy] = useState(false);
   const submit = async event => {
     event.preventDefault();
@@ -393,8 +402,14 @@ function LoginPage({ onLogin, language, setLanguage }) {
         <p className="login-form-sub">{t('signInSubtitle')}</p>
         <label className="login-field"><span>{t('signInEmail')}</span><input type="email" required autoComplete="username" placeholder="name@tedxzizhupark.com" value={email} onChange={e => setEmail(e.target.value)} /></label>
         <label className="login-field"><span>{t('signInPassword')}</span><input type="password" required autoComplete="current-password" placeholder="••••••••" value={password} onChange={e => setPassword(e.target.value)} /></label>
-        {error && <div className="login-error"><CircleAlert size={16} /><span>{error}</span></div>}
+        {(error || feishuNotice) && <div className="login-error"><CircleAlert size={16} /><span>{error || feishuNotice}</span></div>}
         <button className="login-submit" type="submit" disabled={busy}>{busy ? t('signInLoading') : t('signInSubmit')}<ArrowUpRight size={17} /></button>
+        <div className="login-divider"><span>{isEn ? 'or' : '或'}</span></div>
+        <a className="login-feishu" href="/api/feishu/oauth/start">
+          <svg width="17" height="17" viewBox="0 0 24 24" aria-hidden="true"><path fill="currentColor" d="M3.4 5.2c2.6-1.5 5.2-.6 6.6.7 1.2 1.1 2 2.6 2.9 4 .5.8 1 1.6 1.6 2.3-1.2.9-2.6 1.5-4.1 1.5-2.6 0-4.6-1.4-5.9-3.3-1-1.4-1.5-3.2-1.1-5.2ZM13.7 14.2c1.4.9 2.9 1.4 4.4 1.4 1.4 0 2.6-.4 3.5-1.1.5 1.3.3 2.6-.5 3.7-1 1.3-2.7 2-4.4 1.9-1.6-.1-3-.9-4.1-2 .3-.6.7-1.3 1.1-1.9ZM14.6 9.3c-.7-1.1-1.5-2.2-2.5-3.1-1.5-1.4-3.4-2.2-5.4-2.1 1.1-1 2.6-1.4 4-1.1 1.7.3 3.1 1.5 3.9 3 .4.8.6 1.7.6 2.6 0 .2 0 .5-.1.7h-.5Z"/></svg>
+          <span>{isEn ? 'Sign in with Feishu' : '使用飞书登录'}</span>
+          <ArrowUpRight size={15} />
+        </a>
         <p className="login-secure"><LockKeyhole size={14} /><span>{t('signInSecure')}</span></p>
         <p className="login-help">{t('signInHelp')}</p>
       </form>
@@ -408,10 +423,34 @@ export default function App() {
   const [language, setLanguage] = usePersistentState('tedx-hub-v2-language', 'zh');
   useEffect(() => {
     let alive = true;
-    getCurrentUser().then(user => { if (alive) setSession(user || null); });
+    // 优先使用飞书 OAuth 会话（服务端 HttpOnly Cookie），其次回退到 Appwrite 邮箱会话。
+    const fallback = () => getCurrentUser().then(user => { if (alive) setSession(user || null); }).catch(() => { if (alive) setSession(null); });
+    getFeishuSession()
+      .then(res => {
+        if (!alive) return;
+        if (res && res.session) {
+          const s = res.session;
+          setSession({
+            id: s.id,
+            name: s.name,
+            email: s.email,
+            provider: s.provider || 'feishu',
+            prefs: {
+              role: s.role || 'member',
+              team: s.team || '',
+              displayName: s.name || '',
+              greeting: '',
+              greetingEn: '',
+            },
+          });
+          return;
+        }
+        return fallback();
+      })
+      .catch(() => fallback());
     return () => { alive = false; };
   }, []);
-  const handleLogout = async () => { await signOut(); setSession(null); };
+  const handleLogout = async () => { await Promise.all([signOut().catch(() => null), logoutFeishu().catch(() => null)]); setSession(null); };
   // 公开十周年纪念馆独立路由，无需登录。
   if (window.location.pathname.startsWith('/hall-of-honor')) {
     return <HallOfHonor onExit={() => { window.history.pushState({}, '', '/'); window.location.reload(); }} />;
@@ -575,16 +614,25 @@ function MainApp({ session, onLogout, onSessionUpdate, language, setLanguage }) 
       <footer className="app-footer"><span>TEDxZizhuPark Team Hub · {t('footerTagline')}</span><span>Ideas change everything.</span></footer>
     </div>
 
-    {modal?.type === 'newTask' && <TaskForm onClose={closeModal} onSave={task => { setTasks(prev => [{ ...task, id: Date.now(), progress: 0, collaborators: task.owner ? [task.owner.slice(0, 1)] : [] }, ...prev]); closeModal(); notify('新任务已创建并通知负责人'); }} />}
+    {modal?.type === 'newTask' && <TaskForm onClose={closeModal} onSave={task => {
+      setTasks(prev => [{ ...task, id: Date.now(), progress: 0, collaborators: task.owner ? [task.owner.slice(0, 1)] : [] }, ...prev]);
+      closeModal(); notify('新任务已创建并通知负责人');
+      notifyFeishu('event.created', { title: '新建活动/任务', summary: 'Team Hub 中创建了新的活动或任务。', fields: [['任务', task.title || '—'], ['所属团队', task.team || '—'], ['负责人', task.owner || '—'], ['截止日期', task.due || '—']] });
+    }} />}
     {modal?.type === 'reportReview' && <ReportReview report={modal.data} onClose={closeModal} onApprove={() => approveReport(modal.data)} onReturn={() => returnReport(modal.data)} />}
     {modal?.type === 'reportEditor' && <ReportEditor report={modal.data} teams={teams} onClose={closeModal} onSave={(data, submit) => {
       if (modal.data?.id) setReports(prev => prev.map(r => r.id === modal.data.id ? { ...r, ...data, status: submit ? '审核中' : '填写中' } : r));
       closeModal(); notify(submit ? '月报已提交，审核结果将通过站内通知告知' : '月报草稿已保存');
+      if (submit) notifyFeishu('workload.submitted', { title: '月度工作量已提交', summary: '组长提交了本月团队月报，等待审核。', fields: [['团队', modal.data?.team || data.team || '—'], ['月份', modal.data?.month || data.month || '—'], ['任务数', data.tasks ?? modal.data?.tasks ?? 0], ['状态', '待审核']] });
     }} />}
     {modal?.type === 'memberDetail' && <MemberDetail member={modal.data} onClose={closeModal} exportCsv={exportCsv} />}
     {modal?.type === 'newMember' && <MemberForm onClose={closeModal} onSave={member => { setMembers(prev => [...prev, { ...member, id: Date.now(), points: 0, monthPoints: 0, tasks: 0, events: 0, status: '正常' }]); closeModal(); notify(`已邀请 ${member.name} 加入 Team Hub`); }} />}
     {modal?.type === 'reserveForm' && <ReserveForm isEn={isEn} onClose={closeModal} onSave={form => { setReserves(prev => [{ ...form, id: Date.now(), created: new Date().toLocaleDateString('zh-CN') }, ...prev]); closeModal(); notify(isEn ? 'Added to the reserve volunteer roster' : '已加入后备现场志愿者档案'); }} />}
-    {modal?.type === 'pointsAdjust' && <PointsAdjust members={members} onClose={closeModal} onSave={tx => { setTransactions(prev => [{ ...tx, id: `PT${Date.now()}`, date: '刚刚', status: '已入账' }, ...prev]); closeModal(); notify('积分调整已入账，操作已记入审计日志'); }} />}
+    {modal?.type === 'pointsAdjust' && <PointsAdjust members={members} onClose={closeModal} onSave={tx => {
+      setTransactions(prev => [{ ...tx, id: `PT${Date.now()}`, date: '刚刚', status: '已入账' }, ...prev]);
+      closeModal(); notify('积分调整已入账，操作已记入审计日志');
+      notifyFeishu('points.created', { title: '积分变动通知', summary: 'Team Hub 中记录了一条积分流水。', fields: [['成员', tx.member || '—'], ['所属团队', tx.team || '—'], ['积分变化', `${tx.points > 0 ? '+' : ''}${tx.points ?? 0}`], ['原因', tx.source || '—']] });
+    }} />}
     {modal?.type === 'teamDetail' && <TeamDetail team={modal.data} onClose={closeModal} navigate={navigate} />}
     {toast && <Toast message={toast} onClose={() => setToast('')} />}
   </div></LanguageContext.Provider>;
@@ -989,6 +1037,7 @@ function SettingsPage({ notify, t, isEn, language, session, role, orgSettings, o
     if (tab === 'general') saveGreeting();
     else if (tab === 'points') saveRules();
     else if (tab === 'notifications') saveNotif();
+    else if (tab === 'feishu') notify(L('飞书设置在下方各模块中单独保存', 'Save each Feishu module below with its own button'));
     else if (tab === 'roles') notify(L('角色由团队管理组在 Appwrite Auth 中维护', 'Roles are managed in Appwrite Auth by the Team Management Group'));
     else pingCloud().then(result => { setCloudCheck(result); notify(L('云端连接已刷新', 'Cloud connection refreshed')); }).catch(() => notify(L('云端连接异常，请稍后重试', 'Cloud connection failed, please retry')));
   };
@@ -1004,6 +1053,7 @@ function SettingsPage({ notify, t, isEn, language, session, role, orgSettings, o
     ['notifications', t('notificationSettings'), Bell],
     ['roles', t('rolePermissions'), ShieldCheck],
     ['data', t('dataBackup'), Database],
+    ['feishu', isEn ? 'Feishu' : '飞书集成', Link2],
   ];
 
   return <div className="page settings-page">
@@ -1091,6 +1141,8 @@ function SettingsPage({ notify, t, isEn, language, session, role, orgSettings, o
             <p className="greeting-hint"><Info size={15} /><span>{L('角色存放于 Appwrite Auth 的账号偏好中，由团队管理组统一维护；此处仅作查看，避免前端越权修改。', 'Roles live in Appwrite Auth preferences and are maintained by the Team Management Group; this page is read-only by design.')}</span></p>
           </section>
         </>}
+
+        {tab === 'feishu' && <FeishuSettings isEn={isEn} isAdmin={isAdmin} notify={notify} t={t} />}
 
         {tab === 'data' && <>
           <section className="card settings-section"><div className="settings-title"><span><Database size={19} /></span><div><h2>{L('云端连接', 'Cloud Connection')}</h2><p>{L('前端通过区域端点直接连接 Appwrite TablesDB', 'The frontend connects to Appwrite TablesDB via the regional endpoint')}</p></div></div>
