@@ -35,6 +35,7 @@ export default function FeishuSettings({ isEn, isAdmin, notify, t }) {
   const [chatName, setChatName] = useState('');
   const [interval, setIntervalMin] = useState(30);
   const [toggles, setToggles] = useState({});
+  const [wsStatus, setWsStatus] = useState({ online: false, lastAt: '', type: '' });
   const [logType, setLogType] = useState('sync');
   const [logs, setLogs] = useState({ items: [], total: 0, loading: false });
 
@@ -58,7 +59,19 @@ export default function FeishuSettings({ isEn, isAdmin, notify, t }) {
     setLogs({ items: res.items || [], total: res.total || 0, loading: false });
   };
 
-  useEffect(() => { loadStatus().then(() => loadLogs('sync')); }, []);
+  // 长连接客户端每 5 分钟写一条 ws.heartbeat，据此判断是否在线（跨机器可见）。
+  const loadWsStatus = async () => {
+    const res = await feishuLogs('event', 30);
+    const rows = (res.items || []).filter(r => String(r.event_type || '').startsWith('ws.'));
+    const latest = rows[0];
+    if (!latest) return setWsStatus({ online: false, lastAt: '', type: '' });
+    const at = latest.received_at || '';
+    const ageMs = at ? Date.now() - new Date(at).getTime() : Infinity;
+    const alive = /ws\.(connected|reconnected|heartbeat)$/.test(latest.event_type) && ageMs < 6 * 60 * 1000;
+    setWsStatus({ online: alive, lastAt: at, type: latest.event_type });
+  };
+
+  useEffect(() => { loadStatus().then(() => { loadLogs('sync'); loadWsStatus(); }); }, []);
   useEffect(() => { loadLogs(logType); }, [logType]);
 
   const runSync = async (mode) => {
@@ -156,8 +169,23 @@ export default function FeishuSettings({ isEn, isAdmin, notify, t }) {
         </div>
       )}
 
+      <div className="fx-subscribe">
+        <span className="fx-subscribe-label">{L('事件接入方式', 'Event delivery')}</span>
+        <span className={`fx-chip ${wsStatus.online ? 'on' : ''}`}>
+          {wsStatus.online
+            ? L(`长连接在线 · ${fmt(wsStatus.lastAt)} 心跳`, `WebSocket live · heartbeat ${fmt(wsStatus.lastAt)}`)
+            : L('长连接未检测到', 'WebSocket not detected')}
+        </span>
+        <span className="fx-chip muted">{L('Webhook 兜底可用', 'Webhook fallback ready')}</span>
+        {!wsStatus.online && (
+          <span className="fx-hint">
+            {L('启动：npm run feishu:ws（或 bash scripts/install-feishu-ws.sh 常驻）', 'Start: npm run feishu:ws (or install-feishu-ws.sh)')}
+          </span>
+        )}
+      </div>
+
       <div className="fx-actions">
-        <button className="button secondary" onClick={() => loadStatus(false, true)}><RefreshCw size={15} />{L('重新检查连接', 'Re-check')}</button>
+        <button className="button secondary" onClick={() => { loadStatus(false, true); loadWsStatus(); }}><RefreshCw size={15} />{L('重新检查连接', 'Re-check')}</button>
         <span className="fx-hint">{L(`通讯录 ${stats.members ?? 0} 位成员 · 其中 ${stats.fromFeishu ?? 0} 位来自飞书 · 待确认离开 ${stats.pendingLeave ?? 0} 位`, `${stats.members ?? 0} members · ${stats.fromFeishu ?? 0} from Feishu · ${stats.pendingLeave ?? 0} pending leave`)}</span>
       </div>
     </section>

@@ -183,6 +183,52 @@
 > 若仍超时：先在浏览器访问一次 `https://<域名>/api/feishu/events`（会返回 `405 {"code":405}`），
 > 这条请求会把函数容器预热，随后立刻在飞书控制台点保存即可。
 
+### 5.2 事件订阅：Webhook 与「长连接」两种模式
+
+飞书「事件与回调 → 订阅方式」有两种，本项目**两套都已实现，可随时切换**，业务逻辑共用 `api/_lib/event-handler.js`：
+
+| | 将回调发送至开发者服务器（Webhook） | 使用长连接接收回调（WebSocket） |
+|---|---|---|
+| 入口 | `api/feishu/events.js`（已部署在 Vercel） | `scripts/feishu-ws-client.mjs`（常驻进程） |
+| 需要公网域名 | 需要 | **不需要** |
+| 响应时限 | **3 秒**（超时报「请求3秒超时」） | 无限制 |
+| 加密策略 / Verification Token | 需要配置 | 不需要（连接本身已鉴权） |
+| 进程要求 | 无（Serverless 即可） | **必须常驻**，Vercel 无法维持 WebSocket |
+
+**为什么长连接不能跑在 Vercel**：Serverless 函数按请求启动、执行完即冻结，最长存活几分钟，无法维持需要心跳的 WebSocket。因此长连接客户端必须跑在一台常开的机器上（本机 / 云服务器 / 容器）。
+
+#### 启动方式（三选一）
+
+```bash
+# 1) 前台调试（看到实时日志）
+npm run feishu:ws
+
+# 2) macOS 开机自启（推荐本机常驻）—— 生成 launchd plist 并加载
+bash scripts/install-feishu-ws.sh
+bash scripts/install-feishu-ws.sh status   # 查看状态
+bash scripts/install-feishu-ws.sh logs     # 实时日志
+bash scripts/install-feishu-ws.sh remove   # 卸载
+
+# 3) 云服务器 / 容器
+pm2 start "npm run feishu:ws" --name teamhub-feishu-ws && pm2 save && pm2 startup
+```
+
+客户端行为：自动重连（SDK 内置）、30 秒看门狗（连续 3 次连接失败则退出交给进程守护重启）、每 5 分钟写一次 `ws.heartbeat` 到 `feishu_event_logs`。
+
+#### 切换步骤（飞书后台）
+
+1. 事件与回调 → 订阅方式 → 选「**使用长连接接收回调**」；
+2. 本机执行 `npm run feishu:ws`（或安装为服务）；
+3. 点「**验证**」——应当直接通过（验证的就是"是否有活跃长连接"）；
+4. 在下方「**添加事件**」里勾选 6 个通讯录事件：
+   `contact.user.created_v3`、`contact.user.updated_v3`、`contact.user.deleted_v3`、
+   `contact.department.created_v3`、`contact.department.updated_v3`、`contact.department.deleted_v3`。
+
+> ⚠️ 长连接模式下**事件不会排队**：进程没运行期间发生的变更不会补推（但每天/每次手动全量同步会补齐数据）。
+> 若需要"永不丢事件"，可保留 Webhook 作为兜底通道（两种入口写同一张事件日志表、共用幂等逻辑）。
+
+设置页「飞书集成 → 连接状态」会显示 `长连接在线 · 时间 心跳` 或 `长连接未检测到`，并提示启动命令。
+
 ## 6. 环境变量
 
 已写入 Vercel（Production/Preview/Development）：

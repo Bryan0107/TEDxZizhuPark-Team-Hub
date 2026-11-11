@@ -140,3 +140,10 @@ APPWRITE_KEY=<your-key> node scripts/seed-hall.mjs
 - 排障顺序：设置页「飞书集成 → 重新检查连接」→ 看 `feishu_sync_logs.error` → 看 `feishu_event_logs`（回调）→ 看 `notification_logs`（消息）。
 - 定时：Vercel Hobby 的 Cron 为每日一次；30 分钟级由 `.github/workflows/feishu-sync.yml` 触发 `/api/cron/feishu-sync`，需仓库 Secrets `FEISHU_SYNC_URL`、`FEISHU_CRON_SECRET`。
 - 已知限制：通讯录权限范围未扩大前只能同步 1 人、部门接口 40004；OAuth 需在飞书后台登记重定向 URL；机器人未入群时消息发送会 `failed` 并记录日志（不影响业务）。
+
+### 11.1 飞书事件接入方式（Webhook / 长连接）
+
+- Webhook：`api/feishu/events.js`，部署在 Vercel，需公网地址、3 秒内响应、可配加密策略。
+- 长连接：`scripts/feishu-ws-client.mjs`（`npm run feishu:ws`），必须常驻；本机可用 `bash scripts/install-feishu-ws.sh` 装成 launchd 服务，云上可用 pm2/systemd。
+- 两者共用 `api/_lib/event-handler.js`，事件日志与幂等逻辑一致；设置页会显示长连接在线状态（依据 `ws.heartbeat`，5 分钟一次）。
+- 长连接不排队：进程停止期间的事件不会补推，靠每日全量同步兜底。

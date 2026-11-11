@@ -6,9 +6,11 @@
   "scripts": {
     "dev": "vite --host 127.0.0.1",
     "build": "vite build",
-    "preview": "vite preview --host 127.0.0.1"
+    "preview": "vite preview --host 127.0.0.1",
+    "feishu:ws": "node --env-file=.env.local scripts/feishu-ws-client.mjs"
   },
   "dependencies": {
+    "@larksuiteoapi/node-sdk": "^1.76.0",
     "@vitejs/plugin-react": "latest",
     "appwrite": "^29.2.0",
     "lucide-react": "^0.468.0",

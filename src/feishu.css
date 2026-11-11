@@ -86,3 +86,11 @@
   .fx-status{margin-left:0}
   .fx-kv-grid strong{font-size:12.5px}
 }
+
+/* 事件接入方式 */
+.fx-subscribe{display:flex;flex-wrap:wrap;align-items:center;gap:8px;padding:11px 13px;border:1px solid #eeeeea;border-radius:8px;background:#fafaf8;margin:0 0 4px}
+.fx-subscribe-label{font-size:11.5px;color:#8a8a84;margin-right:2px}
+.fx-chip{display:inline-flex;align-items:center;gap:5px;padding:4px 10px;border-radius:20px;font-size:11.5px;font-weight:600;background:#f1f1ee;color:#777772;border:1px solid transparent}
+.fx-chip.on{background:#e8f5ee;color:#2f7d5b;border-color:#d8ecdf}
+.fx-chip.muted{background:#fff;border-color:#e6e6e1;color:#8a8a84}
+@media(max-width:720px){.fx-subscribe{flex-direction:column;align-items:flex-start}}
