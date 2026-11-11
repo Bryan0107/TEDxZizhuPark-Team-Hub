@@ -10,7 +10,14 @@ set -euo pipefail
 
 LABEL="com.tedxzizhupark.teamhub.feishu-ws"
 PROJECT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-NODE_BIN="$(command -v node || true)"
+# 优先用系统级 Node（launchd 不依赖 WorkBuddy 的临时 binaries 目录）
+if [[ -x /opt/homebrew/bin/node ]]; then
+  NODE_BIN=/opt/homebrew/bin/node
+elif [[ -x /usr/local/bin/node ]]; then
+  NODE_BIN=/usr/local/bin/node
+else
+  NODE_BIN="$(command -v node || true)"
+fi
 PLIST="$HOME/Library/LaunchAgents/$LABEL.plist"
 LOG_DIR="$PROJECT_DIR/.workbuddy/logs"
 OUT_LOG="$LOG_DIR/feishu-ws.log"
@@ -22,7 +29,12 @@ fi
 
 case "${1:-install}" in
   status)
-    launchctl list | grep "$LABEL" || echo "未安装或未运行"
+    if launchctl list 2>/dev/null | grep -q "$LABEL"; then
+      launchctl list | grep "$LABEL"
+    else
+      echo "launchd 未登记该服务"
+    fi
+    pgrep -fl "feishu-ws-client" || echo "进程未运行（可用 npm run feishu:ws 临时启动）"
     echo "--- 最近日志 ---"
     tail -n 15 "$OUT_LOG" 2>/dev/null || echo "暂无日志"
     ;;
@@ -66,10 +78,20 @@ case "${1:-install}" in
 </plist>
 PLIST_EOF
 
-    launchctl unload -w "$PLIST" 2>/dev/null || true
-    launchctl load -w "$PLIST"
+    launchctl bootout "gui/$(id -u)" "$PLIST" 2>/dev/null || true
+    if launchctl bootstrap "gui/$(id -u)" "$PLIST" 2>/dev/null; then
+      echo "已通过 bootstrap 加载服务"
+    elif launchctl load -w "$PLIST" 2>/dev/null; then
+      echo "已通过 load 加载服务"
+    else
+      echo "⚠️  自动加载失败（当前环境可能不允许管理后台服务）。"
+      echo "   请在你自己的终端里执行一次："
+      echo "     bash $PROJECT_DIR/scripts/install-feishu-ws.sh"
+      echo "   或手动加载："
+      echo "     launchctl bootstrap gui/\$(id -u) \"$PLIST\""
+    fi
     sleep 3
-    echo "已安装并启动：$LABEL"
+    echo "已安装：$LABEL"
     echo "plist: $PLIST"
     echo "日志:  $OUT_LOG"
     echo
