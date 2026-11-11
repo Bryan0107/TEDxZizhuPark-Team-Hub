@@ -129,3 +129,14 @@ APPWRITE_KEY=<your-key> node scripts/seed-hall.mjs
 ```
 
 - 已知限制：2020—2025 的成员名单未在公开资料中完整披露，组织架构页对缺口届次显示「名单待补充」；历届总负责人字段为空，待管理端补录。
+
+## 10. 飞书集成运维
+
+- 代码位置：`api/_lib/`（feishu / store / sync / notify / session）+ `api/feishu/**`（端点）+ `src/feishu.js`、`src/FeishuSettings.jsx`。
+- 数据表：`feishu_integrations`、`feishu_sync_logs`、`feishu_event_logs`、`notification_logs`、`departments`、`member_departments`（数据库共 26 张表）。结构脚本：`APPWRITE_KEY=<key> node scripts/provision-feishu.mjs`（幂等）。
+- 环境变量（Vercel，服务端专用，均不入库）：`FEISHU_APP_ID`、`FEISHU_APP_SECRET`、`FEISHU_REDIRECT_URI`、`FEISHU_SYNC_INTERVAL`、`TEAM_HUB_SESSION_SECRET`、`FEISHU_CRON_SECRET`、`APPWRITE_KEY`、`APPWRITE_ENDPOINT/PROJECT_ID/DB`；待补 `FEISHU_VERIFICATION_TOKEN`、`FEISHU_ENCRYPT_KEY`、`FEISHU_NOTIFICATION_CHAT_ID`。
+- 会话：飞书 OAuth 成功后签发 HS256 JWT，写入 HttpOnly Cookie `th_session`（12h）。`/api/session` 每次读取都复核 `member_status` 与 `is_login_enabled`，转为 Alumni 后立即失效。
+- 同步安全边界：飞书通讯录消失 **只标记** `sync_state=pending_leave`，不删除成员、不动积分与历史；管理员在成员管理里确认后才转 `alumni/inactive`。
+- 排障顺序：设置页「飞书集成 → 重新检查连接」→ 看 `feishu_sync_logs.error` → 看 `feishu_event_logs`（回调）→ 看 `notification_logs`（消息）。
+- 定时：Vercel Hobby 的 Cron 为每日一次；30 分钟级由 `.github/workflows/feishu-sync.yml` 触发 `/api/cron/feishu-sync`，需仓库 Secrets `FEISHU_SYNC_URL`、`FEISHU_CRON_SECRET`。
+- 已知限制：通讯录权限范围未扩大前只能同步 1 人、部门接口 40004；OAuth 需在飞书后台登记重定向 URL；机器人未入群时消息发送会 `failed` 并记录日志（不影响业务）。
