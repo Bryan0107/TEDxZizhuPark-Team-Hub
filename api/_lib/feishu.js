@@ -104,19 +104,89 @@ export async function api(path, { method = 'GET', query, body } = {}) {
 }
 
 // ── 通讯录 ─────────────────────────────────────────────────────────
-/** 全量拉取用户（分页）。返回 { items, pages, truncated } */
+/**
+ * 全量拉取用户。
+ *
+ * 注意：`GET /contact/v3/users` 只返回「根部门直属」的用户；真实组织里成员都在子部门下，
+ * 直接调用会得到 0 人。因此这里改为「部门聚合」：
+ *   1. 取部门树（含根部门 0）
+ *   2. 对每个部门调用 find_by_department（自动分页）
+ *   3. 按 open_id 去重
+ *   4. 若部门接口因权限不可用，回退到 users 列表，保证仍能同步到根部门用户
+ */
 export async function listAllUsers({ pageSize = 50, maxPages = 200 } = {}) {
-  const items = [];
-  let pageToken = '';
+  const byId = new Map();
   let pages = 0;
-  do {
-    const res = await api('/contact/v3/users', { query: { page_size: pageSize, page_token: pageToken, user_id_type: 'open_id', department_id_type: 'open_department_id' } });
-    items.push(...(res.data?.items || []));
-    pageToken = res.data?.page_token || '';
-    pages++;
-    if (!res.data?.has_more) break;
-  } while (pageToken && pages < maxPages);
-  return { items, pages, truncated: Boolean(pageToken) && pages >= maxPages };
+  let truncated = false;
+  let departmentDenied = false;
+
+  const collect = async departmentId => {
+    let pageToken = '';
+    let last = '';
+    do {
+      const res = await api('/contact/v3/users/find_by_department', {
+        query: {
+          department_id: departmentId,
+          page_size: pageSize,
+          page_token: pageToken,
+          user_id_type: 'open_id',
+          department_id_type: 'open_department_id',
+        },
+      });
+      for (const u of res.data?.items || []) {
+        if (u?.open_id && !byId.has(u.open_id)) byId.set(u.open_id, u);
+      }
+      pageToken = res.data?.page_token || '';
+      pages++;
+      if (!res.data?.has_more || pageToken === last) break;
+      last = pageToken;
+    } while (pageToken && pages < maxPages);
+  };
+
+  // 1) 根部门
+  try {
+    await collect('0');
+  } catch (err) {
+    if (err.code === 40004 || err.code === 40003) departmentDenied = true;
+    else throw err;
+  }
+
+  // 2) 所有子部门
+  if (!departmentDenied) {
+    try {
+      const depts = await listAllDepartments();
+      departmentDenied = depts.scopeDenied;
+      for (const d of depts.items) {
+        if (!d.open_department_id) continue;
+        try {
+          await collect(d.open_department_id);
+        } catch (err) {
+          // 单个部门不可读不中断整体同步
+          if (![40004, 40003, 41050].includes(err.code)) throw err;
+        }
+      }
+    } catch { /* 部门不可用时保留根部门结果 */ }
+  }
+
+  // 3) 兜底：根部门也拿不到时，退回 users 列表
+  if (!byId.size) {
+    let pageToken = '';
+    let last = '';
+    do {
+      const res = await api('/contact/v3/users', {
+        query: { page_size: pageSize, page_token: pageToken, user_id_type: 'open_id', department_id_type: 'open_department_id' },
+      });
+      for (const u of res.data?.items || []) {
+        if (u?.open_id && !byId.has(u.open_id)) byId.set(u.open_id, u);
+      }
+      pageToken = res.data?.page_token || '';
+      pages++;
+      if (!res.data?.has_more || pageToken === last) break;
+      last = pageToken;
+    } while (pageToken && pages < maxPages);
+  }
+
+  return { items: [...byId.values()], pages, truncated, departmentDenied };
 }
 
 /** 拉取部门树（广度优先）。部门接口需要「通讯录权限范围」覆盖对应部门。 */
@@ -295,17 +365,22 @@ export async function exchangeCodeForUser(code, redirectUri = REDIRECT_URI) {
 /** 飞书事件加密体解密（AES-256-CBC，key=sha256(encrypt_key)，iv=密文前 16 字节）。 */
 export function decryptEvent(encrypt) {
   if (!ENCRYPT_KEY) throw new FeishuError('未配置 FEISHU_ENCRYPT_KEY，无法解密事件', { code: 'NO_ENCRYPT_KEY' });
-  const key = crypto.createHash('sha256').update(ENCRYPT_KEY).digest();
-  const buf = Buffer.from(encrypt, 'base64');
-  const iv = buf.subarray(0, 16);
-  const data = buf.subarray(16);
-  const decipher = crypto.createDecipheriv('aes-256-cbc', key, iv);
-  decipher.setAutoPadding(false);
-  let out = Buffer.concat([decipher.update(data), decipher.final()]);
-  // 去掉 PKCS#7 填充
-  const pad = out[out.length - 1];
-  if (pad > 0 && pad <= 16) out = out.subarray(0, out.length - pad);
-  return JSON.parse(out.toString('utf8'));
+  try {
+    const key = crypto.createHash('sha256').update(ENCRYPT_KEY).digest();
+    const buf = Buffer.from(encrypt, 'base64');
+    const iv = buf.subarray(0, 16);
+    const data = buf.subarray(16);
+    const decipher = crypto.createDecipheriv('aes-256-cbc', key, iv);
+    decipher.setAutoPadding(false);
+    let out = Buffer.concat([decipher.update(data), decipher.final()]);
+    // 去掉 PKCS#7 填充
+    const pad = out[out.length - 1];
+    if (pad > 0 && pad <= 16) out = out.subarray(0, out.length - pad);
+    return JSON.parse(out.toString('utf8'));
+  } catch (err) {
+    // 解密失败最常见原因是 Encrypt Key 与飞书后台不一致，转成可读错误便于排查。
+    throw new FeishuError('事件解密失败，请检查 FEISHU_ENCRYPT_KEY 是否与飞书开放平台一致', { code: 'DECRYPT_FAILED', body: err.message });
+  }
 }
 
 /** 时间安全比较，防止 token 校验被计时攻击。 */

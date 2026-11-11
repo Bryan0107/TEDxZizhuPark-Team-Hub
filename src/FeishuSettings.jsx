@@ -177,6 +177,7 @@ export default function FeishuSettings({ isEn, isAdmin, notify, t }) {
           [L('同步成员数', 'Synced members'), syncResult?.total ?? stats.fromFeishu ?? 0],
           [L('本次新增', 'Created'), syncResult?.created ?? 0],
           [L('本次更新', 'Updated'), syncResult?.updated ?? 0],
+          [L('后备志愿者', 'Reserve'), syncResult?.reserve ?? 0],
           [L('待确认离开', 'Pending leave'), syncResult?.pendingLeave ?? stats.pendingLeave ?? 0],
           [L('失败条目', 'Failed'), syncResult?.failed ?? 0],
         ].map(([label, value]) => (
@@ -206,12 +207,13 @@ export default function FeishuSettings({ isEn, isAdmin, notify, t }) {
             <strong>{L('同步完成', 'Sync complete')}</strong>
             <p>
               {L(
-                `共读取 ${syncResult.total} 位成员，新增 ${syncResult.created}，更新 ${syncResult.updated}，未变化 ${syncResult.unchanged}，待确认离开 ${syncResult.pendingLeave}，部门 ${syncResult.departments}，成员-部门关联 ${syncResult.memberDepartments}。耗时 ${syncResult.durationMs} ms。`,
-                `${syncResult.total} users read · created ${syncResult.created} · updated ${syncResult.updated} · unchanged ${syncResult.unchanged} · pending leave ${syncResult.pendingLeave} · departments ${syncResult.departments} · links ${syncResult.memberDepartments} · ${syncResult.durationMs} ms.`,
+                `共读取 ${syncResult.total} 位成员，新增 ${syncResult.created}，更新 ${syncResult.updated}，未变化 ${syncResult.unchanged}，后备志愿者 ${syncResult.reserve}，待确认离开 ${syncResult.pendingLeave}，部门 ${syncResult.departments}，成员-部门关联 ${syncResult.memberDepartments}。耗时 ${Math.round(syncResult.durationMs / 100) / 10}s。`,
+                `${syncResult.total} users · created ${syncResult.created} · updated ${syncResult.updated} · unchanged ${syncResult.unchanged} · reserve ${syncResult.reserve} · pending leave ${syncResult.pendingLeave} · departments ${syncResult.departments} · links ${syncResult.memberDepartments} · ${Math.round(syncResult.durationMs / 100) / 10}s.`,
               )}
             </p>
             {!!syncResult.sample?.newUsers?.length && <p className="fx-muted">{L('新增：', 'New: ')}{syncResult.sample.newUsers.map(u => u.name).join('、')}</p>}
             {!!syncResult.sample?.pendingLeaveUsers?.length && <p className="fx-muted">{L('待确认离开：', 'Pending leave: ')}{syncResult.sample.pendingLeaveUsers.map(u => u.name).join('、')}</p>}
+            {!!syncResult.sample?.reserveUsers?.length && <p className="fx-muted">{L('后备志愿者（储备部门，不计入在编）：', 'Reserve volunteers (not counted as active): ')}{syncResult.sample.reserveUsers.map(u => u.name).join('、')}{syncResult.reserve > syncResult.sample.reserveUsers.length ? L(` 等 ${syncResult.reserve} 人`, ` +${syncResult.reserve - syncResult.sample.reserveUsers.length} more`) : ''}</p>}
             {!!syncResult.errors?.length && <p className="fx-muted fx-warn">{syncResult.errors.slice(0, 3).join(' · ')}</p>}
           </div>
         </div>

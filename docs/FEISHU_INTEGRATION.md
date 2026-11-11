@@ -72,6 +72,12 @@
 | 从通讯录消失 | `sync_state=pending_leave`，**绝不删除**，不触碰积分/贡献 |
 | 待确认离开后又出现 | `sync_state=synced`，视为重新加入 |
 | 管理员确认离开 | 手动改 `member_status=alumni`/`inactive` + `is_login_enabled=false` |
+| 部门 | 逐部门拉取（见下），写入 `departments` 与 `member_departments` |
+| 部门 → 组织组 | 名称含「内容/媒体/伙伴/管理支持」的自动映射到对应组，**仅在成员 team 为空时**补写，不覆盖人工设置 |
+| 储备部门 | 名称含「储备/后备/Reserve」的成员不进在编成员，自动写入 `reserve_volunteers` 后备现场志愿者档案 |
+
+> **踩坑记录**：`GET /contact/v3/users` 只返回「根部门直属」用户。真实组织成员都在子部门，直接调用返回 0 人。
+> 已改为「部门聚合」：取部门树 → 逐部门 `find_by_department`（自动分页）→ 按 open_id 去重 → 兜底回退 users 列表。
 
 模式：`full`（全量写库）/ `incremental`（只写差异，省配额）/ 事件订阅（实时）。
 
@@ -136,11 +142,15 @@
 
 ## 5. 需要管理员在飞书后台完成的操作
 
-> 以下 3 项**必须在飞书开放平台人工完成**，代码侧无法代办。
+| 项 | 状态 |
+|---|---|
+| 通讯录权限范围 | ✅ 已完成（现可读 5 个部门 / 40 位成员） |
+| 机器人入群 | ✅ 已完成（群「内部测试用」，测试消息已送达） |
+| Verification Token / Encrypt Key | ✅ 已配置到服务端环境变量 |
+| **重定向 URL** | ⏳ **待添加** |
+| **事件订阅地址** | ⏳ **待添加** |
 
-1. **通讯录权限范围**（当前阻塞项）
-   开放平台 → 应用 → **权限管理 → 数据权限 → 通讯录权限范围** → 选择「全部成员」或勾选需要同步的部门 → 提交（需企业管理员审批）。
-   *现状*：`/contact/v3/users` 可用但只返回 1 人；`/contact/v3/departments` 返回 `40004 no dept authority`。
+> 剩余 2 项**必须在飞书开放平台人工完成**，代码侧无法代办。
 
 2. **重定向 URL**（飞书登录必需）
    开放平台 → 应用 → **安全设置 → 重定向 URL** → 添加：
@@ -155,10 +165,9 @@
    https://tedxzizhupark-team-hub.vercel.app/api/feishu/events
    ```
    订阅事件：`contact.user.created_v3`、`contact.user.updated_v3`、`contact.user.deleted_v3`、`contact.department.created_v3`、`contact.department.updated_v3`、`contact.department.deleted_v3`。
-   把 **Verification Token** 与 **Encrypt Key** 提供给我（或自行填入 Vercel 环境变量），否则事件接口只能做 URL 验证、无法校验来源。
+   Verification Token 与 Encrypt Key 已配好，填完地址后飞书会先发 URL 验证请求，接口会自动回 `challenge`。
 
-4. **机器人进群**（消息通知必需）
-   把应用机器人拉进目标群，然后我在「系统设置 → 飞书集成」中填入 `chat_id` 或从下拉里选群，点「发送测试消息」验证。
+4. **机器人入群** ✅ 已完成：目标群 `内部测试用`（`oc_99c96e9a14dc5e72030f525c588d29b6`），测试消息与业务卡片均已实际送达。
 
 ---
 
@@ -177,7 +186,10 @@
 | `APPWRITE_KEY` | 服务端 API Key，加密存储 |
 | `APPWRITE_ENDPOINT` / `APPWRITE_PROJECT_ID` / `APPWRITE_DB` | sgp 端点 / 项目 / 数据库 |
 
-**待补**：`FEISHU_VERIFICATION_TOKEN`、`FEISHU_ENCRYPT_KEY`、`FEISHU_NOTIFICATION_CHAT_ID`（见第 5 节）。
+| `FEISHU_VERIFICATION_TOKEN` | 事件验签（已配置，加密存储） |
+| `FEISHU_ENCRYPT_KEY` | 事件解密（已配置，加密存储） |
+
+**已全部配齐**。`FEISHU_NOTIFICATION_CHAT_ID` 已在「系统设置 → 飞书集成」中保存为 `oc_99c96e9a14dc5e72030f525c588d29b6`（存 `feishu_integrations` 表，可随时改）。
 
 `.env.example` 已提交（仅占位符，无真实密钥）；`.env*` 在 `.gitignore` 中。
 
@@ -218,6 +230,15 @@
 | 飞书会话 → 应用 | ✅ 注入 `th_session` 后首页显示「早上好，Bryan FU 付天一。」，头像取自 `avatar_240`，角色 admin |
 | 前端写回不丢飞书字段 | ✅ 页面同步后 `feishu_open_id` / `union_id` / `avatar_240` / `is_login_enabled` 全部保留 |
 | 移动端适配 | ✅ 390px `scrollWidth=383`，无横向溢出、无 NaN |
+| 部门聚合拉取 | ✅ 5 个部门 + 1 个子部门，去重后 **40 位成员** |
+| 全量同步（真实组织） | ✅ 40 人 → 30 位在编成员（其中 2 位自动关联历届档案）+ 10 位后备志愿者，0 失败 |
+| 同步幂等 | ✅ 二次同步 `created 0 / updated 0 / unchanged 30`，部门关联 0 次重复写 |
+| 同步耗时 | 首次 ~40s → 优化后 **14.7s**（跳过已有关联 + 并发写入） |
+| 加密事件解密 | ✅ 用真实 Encrypt Key 构造密文 → 解密成功并处理；错误 Key → `decrypt failed` |
+| 验签 | ✅ 真实 Token 通过；错误 Token 返回 403 |
+| 机器人测试消息 | ✅ **实际送达**群「内部测试用」，`messageId om_x100b6008a6987040cf3a4418a41387a` |
+| 业务通知（积分变动） | ✅ **实际送达**卡片，`messageId om_x100b6008a774ecb8ce30e637485a7c2` |
+| 通知开关 | ✅ 关闭 `points.created` 后返回 `skipped`，未发送 |
 | 飞书扫码登录闭环 | ⏸ 待第 5 节「重定向 URL」配置后验证 |
 
 ---
@@ -226,11 +247,9 @@
 
 | 项 | 原因 | 下一步 |
 |---|---|---|
-| 全量通讯录同步（真实全员） | 权限范围只覆盖 1 人 | 飞书后台改「通讯录权限范围」→ 重新检查 |
-| 部门/组织架构同步 | 同上，部门接口 40004 | 同上 |
-| 飞书 OAuth 实际登录 | 未配置重定向 URL | 飞书后台加回调地址 |
-| 实时事件同步 | 未配置事件订阅地址 + Token/Encrypt Key | 第 5 节第 1、3 项 |
-| 机器人消息实发 | 机器人未进群、无 chat_id | 拉机器人进群 → 填 chat_id → 测试 |
+| 飞书 OAuth 实际登录 | 未配置重定向 URL | 飞书后台加回调地址（第 5 节第 2 项） |
+| 实时事件同步 | 未配置事件订阅地址 | 飞书后台填回调地址（第 5 节第 3 项），Token/Key 已就绪 |
+| 同步耗时 >10s | 逐部门拉取 × N + Appwrite 串行延迟 | 已优化到 15s；函数 `maxDuration=60`。成员规模再增长时可改「定时任务分片同步」 |
 | 头像落对象存储 | 当前直接引用飞书 CDN URL | 若出现 URL 失效再加下载+Appwrite Storage 方案 |
 | 服务端行级权限 | 表权限仍为 `any`（Appwrite 免费档 + 既有架构） | 若要对外，需要 Appwrite 付费档启用 Row Security |
 | 通知失败自动重投队列 | 当前为即时 3 次重试 + 文本降级 | 可加定时扫描 `notification_logs(status=failed)` 重投 |

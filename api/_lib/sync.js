@@ -8,6 +8,7 @@
  * - 历史成员（alumni/inactive）恢复出现 → 重新关联 open_id，不重建档案
  * - 同一 open_id 只对应一条 members 记录（幂等 upsert）
  */
+import crypto from 'node:crypto';
 import { listAllUsers, mapFeishuUser, listAllDepartments, mapFeishuDepartment } from './feishu.js';
 import { listAll as dbListAll, upsert, findOne, logSync, saveIntegration, newId, INTEGRATION_ROW } from './store.js';
 import { notifyEvent } from './notify.js';
@@ -27,6 +28,38 @@ const diffFields = (existing, incoming) => {
 
 const norm = s => String(s || '').trim().toLowerCase();
 
+/** 受控并发（避免 Appwrite 限流，同时把串行 40s 压到数秒）。 */
+const mapLimit = async (items, limit, fn) => {
+  const out = new Array(items.length);
+  let cursor = 0;
+  const workers = Array.from({ length: Math.min(limit, items.length || 1) }, async () => {
+    while (cursor < items.length) {
+      const index = cursor++;
+      out[index] = await fn(items[index], index);
+    }
+  });
+  await Promise.all(workers);
+  return out;
+};
+
+/**
+ * 飞书部门 → Team Hub 四个职能组。
+ * 「储备策展团队」不是当期在编成员，按用户要求单独进入后备现场志愿者档案。
+ */
+const DEPT_TEAM_RULES = [
+  [/内容|content/i, '内容组'],
+  [/媒体|media/i, '媒体组'],
+  [/伙伴|partnership|合作/i, '伙伴关系组'],
+  [/管理支持|团队|\bteam\b/i, '团队组'],
+];
+
+export const isReserveDept = name => /储备|后备|reserve/i.test(name || '');
+
+export const mapDeptToTeam = name => {
+  for (const [re, team] of DEPT_TEAM_RULES) if (re.test(name || '')) return team;
+  return '';
+};
+
 /**
  * 执行一次同步。
  * @param {'full'|'incremental'} mode
@@ -39,7 +72,7 @@ export async function runSync(mode = 'incremental', { actor = 'system', notify =
   const report = {
     mode,
     total: 0, created: 0, updated: 0, unchanged: 0, pendingLeave: 0,
-    departments: 0, memberDepartments: 0, failed: 0, errors: [],
+    departments: 0, memberDepartments: 0, reserve: 0, failed: 0, errors: [], reserveUsers: [],
     newUsers: [], updatedUsers: [], pendingLeaveUsers: [], deptScopeDenied: false,
     truncated: false,
   };
@@ -81,12 +114,46 @@ export async function runSync(mode = 'incremental', { actor = 'system', notify =
       }
     }
 
+    // 现有成员-部门关联（避免每次同步重复写）
+    const pendingLinks = [];
+    let existingLinks = new Set();
+    try {
+      const rows = await dbListAll('member_departments');
+      existingLinks = new Set(rows.map(r => `${r.member_id}|${r.feishu_open_department_id}`));
+    } catch { /* 读取失败则全量补写 */ }
+
     // 4) 逐个成员处理
     for (const raw of usersRes.items) {
       if (!raw.open_id) continue;
       seenOpenIds.add(raw.open_id);
       const incoming = mapFeishuUser(raw);
       const deptIds = raw.department_ids || [];
+
+      // 储备部门成员：不进入在编成员，写入后备现场志愿者档案
+      const deptNames = deptIds.map(id => deptNameById.get(id) || '').filter(Boolean);
+      if (deptNames.some(isReserveDept)) {
+        const profileRaw = mapFeishuUser(raw);
+        try {
+          await upsert('reserve_volunteers', `rv_${raw.open_id}`.slice(0, 36), {
+            name: profileRaw.name,
+            english: profileRaw.english,
+            email: profileRaw.email,
+            phone: JSON.parse(profileRaw.feishu_profile || '{}').mobile || '',
+            previous_team: deptNames.join(' / '),
+            years: '',
+            availability: '可支援',
+            skills: '',
+            note: '来自飞书通讯录储备部门，自动同步',
+            created: new Date().toISOString().slice(0, 10),
+          });
+          report.reserve++;
+          report.reserveUsers.push({ name: profileRaw.name, dept: deptNames.join(' / ') });
+        } catch (err) {
+          report.failed++;
+          report.errors.push(`后备志愿者 ${profileRaw.name} 写入失败：${err.message}`);
+        }
+        continue;
+      }
 
       let member = byOpenId.get(raw.open_id);
       let linkedBy = 'open_id';
@@ -100,6 +167,11 @@ export async function runSync(mode = 'incremental', { actor = 'system', notify =
           // 不覆盖已有业务字段：团队归属、积分、加入时间、成员状态由 Team Hub 自己管。
           delete patch.team;
           if (!member.member_status) patch.member_status = member.status === '历届成员' ? 'alumni' : 'active';
+          // 仅在团队为空时按飞书部门推断，绝不覆盖管理员手工设置的团队
+          if (!member.team) {
+            const guessed = mapDeptToTeam(deptNames[0] || '');
+            if (guessed) patch.team = guessed;
+          }
           if (member.is_login_enabled === undefined || member.is_login_enabled === null) {
             patch.is_login_enabled = member.member_status !== 'alumni' && member.member_status !== 'inactive';
           }
@@ -133,6 +205,7 @@ export async function runSync(mode = 'incremental', { actor = 'system', notify =
             totalPoints: 0,
             tasks: 0,
             events: 0,
+            team: mapDeptToTeam(deptNames[0] || ''),
             joined: profile.join_date || `${year}.${String(new Date().getMonth() + 1).padStart(2, '0')}`,
             first_join_year: Number(String(profile.join_date || year).slice(0, 4)) || year,
           };
@@ -151,26 +224,40 @@ export async function runSync(mode = 'incremental', { actor = 'system', notify =
           }
         }
 
-        // 5) 成员-部门关联（多对多）
+        // 5) 成员-部门关联（多对多，跳过已存在，缺失的并发补齐）
         const memberId = byOpenId.get(raw.open_id)?.id;
         if (memberId && deptIds.length) {
-          for (let i = 0; i < deptIds.length; i++) {
-            const deptId = deptIds[i];
-            try {
-              await upsert('member_departments', `md_${memberId}_${deptId}`.slice(0, 36), {
-                member_id: memberId,
-                feishu_open_department_id: deptId,
-                department_name: deptNameById.get(deptId) || '',
-                is_primary: i === 0,
-              });
-              report.memberDepartments++;
-            } catch { /* 关联失败不阻塞同步 */ }
-          }
+          const pending = deptIds
+            .map((deptId, i) => ({
+              // Appwrite rowId 上限 36 字符；md5 取 30 位十六进制保证唯一且稳定
+              rowId: `md_${crypto.createHash('md5').update(`${memberId}|${deptId}`).digest('hex').slice(0, 30)}`,
+              key: `${memberId}|${deptId}`,
+              isPrimary: i === 0,
+              deptId,
+              memberId,
+            }))
+            .filter(link => !existingLinks.has(link.key));
+          pendingLinks.push(...pending);
         }
       } catch (err) {
         report.failed++;
         report.errors.push(`成员 ${raw.name || raw.open_id} 同步失败：${err.message}`);
       }
+    }
+
+    // 5.1) 并发补齐缺失的成员-部门关联
+    if (pendingLinks.length) {
+      await mapLimit(pendingLinks, 5, async link => {
+        try {
+          await upsert('member_departments', link.rowId, {
+            member_id: link.memberId,
+            feishu_open_department_id: link.deptId,
+            department_name: deptNameById.get(link.deptId) || '',
+            is_primary: link.isPrimary,
+          });
+          report.memberDepartments++;
+        } catch { /* 单条失败不影响整体 */ }
+      });
     }
 
     // 6) 飞书已移除的成员 → 待确认离开（不删除）
@@ -205,7 +292,7 @@ export async function runSync(mode = 'incremental', { actor = 'system', notify =
       actor,
       error: report.errors.slice(0, 2).join(' | ').slice(0, 500),
       detail: JSON.stringify({
-        mode, newUsers: report.newUsers.slice(0, 20), updatedUsers: report.updatedUsers.slice(0, 20),
+        mode, reserveUsers: report.reserveUsers.slice(0, 20), newUsers: report.newUsers.slice(0, 20), updatedUsers: report.updatedUsers.slice(0, 20),
         pendingLeaveUsers: report.pendingLeaveUsers.slice(0, 20), deptScopeDenied: report.deptScopeDenied,
         truncated: report.truncated, memberDepartments: report.memberDepartments, errors: report.errors.slice(0, 10),
       }).slice(0, 2000),
@@ -229,12 +316,13 @@ export async function runSync(mode = 'incremental', { actor = 'system', notify =
       pendingLeave: report.pendingLeave,
       departments: report.departments,
       memberDepartments: report.memberDepartments,
+      reserve: report.reserve,
       failed: report.failed,
       deptScopeDenied: report.deptScopeDenied,
       truncated: report.truncated,
       durationMs: finishedAt.getTime() - startedMs,
       errors: report.errors.slice(0, 10),
-      sample: { newUsers: report.newUsers.slice(0, 8), pendingLeaveUsers: report.pendingLeaveUsers.slice(0, 8) },
+      sample: { newUsers: report.newUsers.slice(0, 8), pendingLeaveUsers: report.pendingLeaveUsers.slice(0, 8), reserveUsers: report.reserveUsers.slice(0, 8) },
     };
   } catch (err) {
     await logSync({
