@@ -39,7 +39,7 @@ tedxzizhupark/
 
 | 连接器 | 用途 | 快速验证 |
 |---|---|---|
-| Appwrite（OAuth Console） | 建表、账号、平台、数据查询 | `appwrite_get_context` 返回项目 `status: active`；`tables_db_list_tables` 返回 14 张表 |
+| Appwrite（OAuth Console） | 建表、账号、平台、数据查询 | `appwrite_get_context` 返回项目 `status: active`；`tables_db_list_tables` 返回 20 张表 |
 | Vercel | 部署、环境变量、域名、日志 | `get_project` / `list_deployments` 返回项目与 READY 部署 |
 | GitHub | 读取 PRD、提交与发布 | `get_file_contents` 可读取 `docs/PRD.md` |
 
@@ -52,7 +52,7 @@ tedxzizhupark/
 | Project ID | `6af1211f00086491c07c` |
 | 区域 / 端点 | `sgp` → `https://sgp.cloud.appwrite.io/v1` |
 | 数据库 | `tedx_team_hub` |
-| 表（14） | `teams`、`members`、`team_members`、`users`、`tasks`、`task_members`、`reports`、`monthly_member_records`、`points_rules`、`points_transactions`、`report_reviews`、`audit_logs`、`app_settings`、`reserve_volunteers` |
+| 表（20） | `teams`、`members`、`team_members`、`users`、`tasks`、`task_members`、`reports`、`monthly_member_records`、`points_rules`、`points_transactions`、`report_reviews`、`audit_logs`、`app_settings`、`reserve_volunteers`、`terms`、`term_teams`、`member_terms`、`historical_sources`、`legacy_assets`、`member_stories` |
 | Web 平台 | `localhost`、`127.0.0.1`、`*.vercel.app`（免费档上限 3 个） |
 | 认证 | Appwrite Auth（email / password），角色存于 user prefs |
 
@@ -114,3 +114,18 @@ CSV 导出支持：成员名单、积分流水、月度团队报告、任务清�
 - 云端表为空且本地种子为空数组时，前端会用空数组覆盖本地缓存；只有定义了非空种子时才会播种。
 - 统计卡片、月报进度、团队汇总、排行榜、积分构成等已改为基于云端数据实时计算；每组 `tasks=0` 时完成率显示 0% 而非 NaN。
 
+
+## 9. 十周年数字纪念馆（Hall of Honor）
+
+- 公开路由：`/hall-of-honor`（首页）、`/timeline`、`/terms/:id`、`/teams`、`/members`、`/members/:id`、`/archive`。`vercel.json` 已配置 SPA rewrite，深链接可直接访问。
+- 内部入口：侧边栏「十周年」分组 →「纪念馆首页」（新标签打开公开页）、「纪念馆管理」（仅管理员，维护届次/核验状态/来源/成员公开授权）。
+- 数据表：`terms`（届次与主题）、`term_teams`（当届团队）、`member_terms`（成员跨届任职，含团队与角色）、`historical_sources`（来源与摘录）、`legacy_assets`（影像，默认 internal）、`member_stories`（寄语投稿，默认 private）。
+- 研究结论与口径冲突见 `docs/anniversary-research.md`：可核验 9 届（2018—2026），2017 为筹备年标记 pending。
+- 隐私：公开页仅展示 `members.public_visibility = "public"` 的成员；影像与故事需 `visibility = "public"` 且授权状态通过。默认不公开。
+- 数据导入脚本：`scripts/seed-hall.mjs`（从 `APPWRITE_KEY` 环境变量读取密钥，不在仓库保存）。运行方式：
+
+```bash
+APPWRITE_KEY=<your-key> node scripts/seed-hall.mjs
+```
+
+- 已知限制：2020—2025 的成员名单未在公开资料中完整披露，组织架构页对缺口届次显示「名单待补充」；历届总负责人字段为空，待管理端补录。

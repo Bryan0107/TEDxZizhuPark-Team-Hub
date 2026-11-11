@@ -16,6 +16,8 @@ import {
 } from 'recharts';
 import { teams as initialTeams, members as initialMembers, initialTasks, initialReports, pointTransactions, reserveVolunteers, trendData } from './data';
 import { fetchTable, syncTable, fetchSettings, saveSettings, fetchAppSetting, saveAppSetting, removeRow, pingCloud, APPWRITE_ENDPOINT, APPWRITE_PROJECT, DB } from './api';
+import HallOfHonor, { HallAdmin } from './hall';
+import './hall.css';
 import { getCurrentUser, signIn, signOut, updateMyPrefs, roleLabel } from './auth';
 
 const statusTone = {
@@ -51,6 +53,7 @@ const dictionaries = {
     pointsManagementTitle: '积分管理', pointsManagementSubtitle: '让贡献被量化、被认可',
     analyticsTitle: '数据分析', analyticsSubtitle: '从数据中理解组织运行状态',
     settingsTitle: '系统设置', settingsSubtitle: '管理年度、规则与偏好',
+    hallAdminTitle: '纪念馆管理', hallAdminSubtitle: '维护历届主题、资料来源与公开授权', hallGroup: '十周年', hallHome: '纪念馆首页', hallAdminNav: '纪念馆管理',
     year2026: '2026 年度', searchPlaceholder: '搜索成员、任务或团队…', newTask: '新建任务',
     helpTitle: '需要帮助？', helpText: '查看 Team Hub 使用指南', switchRole: '切换演示角色', signOut: '退出登录',
     roleAdmin: '超级管理员', roleLeader: '团队组长', roleMember: '普通成员',
@@ -115,6 +118,7 @@ const dictionaries = {
     pointsManagementTitle: 'Points Management', pointsManagementSubtitle: 'Make contributions measurable and recognized',
     analyticsTitle: 'Analytics', analyticsSubtitle: 'Understand how the organization runs through data',
     settingsTitle: 'Settings', settingsSubtitle: 'Manage year, rules, and preferences',
+    hallAdminTitle: 'Hall of Honor Admin', hallAdminSubtitle: 'Maintain editions, sources and publication consent', hallGroup: 'Anniversary', hallHome: 'Hall of Honor', hallAdminNav: 'Hall Admin',
     year2026: 'Year 2026', searchPlaceholder: 'Search members, tasks, or teams…', newTask: 'New Task',
     helpTitle: 'Need help?', helpText: 'Read the Team Hub guide', switchRole: 'Switch demo role', signOut: 'Sign out',
     roleAdmin: 'Admin', roleLeader: 'Team Lead', roleMember: 'Member',
@@ -169,7 +173,7 @@ const dictionaries = {
 };
 
 const ROLE_PAGES = {
-  admin: ['dashboard', 'myPoints', 'reports', 'tasks', 'teams', 'members', 'pointsManagement', 'analytics', 'settings'],
+  admin: ['dashboard', 'myPoints', 'reports', 'tasks', 'teams', 'members', 'pointsManagement', 'analytics', 'settings', 'hallAdmin'],
   leader: ['dashboard', 'myPoints', 'reports', 'tasks', 'teams', 'members', 'analytics', 'settings'],
   member: ['dashboard', 'myPoints', 'teams', 'settings'],
 };
@@ -184,6 +188,7 @@ const getPageMeta = t => ({
   pointsManagement: [t('pointsManagementTitle'), t('pointsManagementSubtitle')],
   analytics: [t('analyticsTitle'), t('analyticsSubtitle')],
   settings: [t('settingsTitle'), t('settingsSubtitle')],
+  hallAdmin: [t('hallAdminTitle'), t('hallAdminSubtitle')],
 });
 
 const getNavGroups = t => [
@@ -407,6 +412,10 @@ export default function App() {
     return () => { alive = false; };
   }, []);
   const handleLogout = async () => { await signOut(); setSession(null); };
+  // 公开十周年纪念馆独立路由，无需登录。
+  if (window.location.pathname.startsWith('/hall-of-honor')) {
+    return <HallOfHonor onExit={() => { window.history.pushState({}, '', '/'); window.location.reload(); }} />;
+  }
   if (session === undefined) return <div className="boot-screen"><img src="/assets/logo-black.png" alt="TEDxZizhuPark" /><span>Loading Team Hub…</span></div>;
   if (!session) return <LoginPage onLogin={setSession} language={language} setLanguage={setLanguage} />;
   return <MainApp session={session} onLogout={handleLogout} onSessionUpdate={setSession} language={language} setLanguage={setLanguage} />;
@@ -449,6 +458,12 @@ function MainApp({ session, onLogout, onSessionUpdate, language, setLanguage }) 
   const pageMeta = getPageMeta(t);
   const allowedPages = ROLE_PAGES[role] || ROLE_PAGES.member;
   const navGroups = getNavGroups(t).map(group => ({ ...group, items: group.items.filter(item => allowedPages.includes(item.id)) })).filter(group => group.items.length);
+  if (role === 'admin' || role === 'leader') {
+    navGroups.push({ label: t('hallGroup'), items: [
+      { id: 'hall', label: t('hallHome'), icon: Sparkles, external: '/hall-of-honor' },
+      ...(role === 'admin' ? [{ id: 'hallAdmin', label: t('hallAdminNav'), icon: ShieldCheck }] : []),
+    ] });
+  }
   useEffect(() => { if (!allowedPages.includes(activePage)) setActivePage('dashboard'); }, [role]);
 
   const navigate = page => { setActivePage(page); setSidebarOpen(false); setSearch(''); setSearchFocus(false); setLanguageOpen(false); setNotificationsOpen(false); setProfileOpen(false); window.scrollTo(0, 0); };
@@ -510,6 +525,7 @@ function MainApp({ session, onLogout, onSessionUpdate, language, setLanguage }) 
     case 'myPoints': content = <MyPointsPage transactions={transactions} tasks={tasks} teams={teams} {...shared} />; break;
     case 'pointsManagement': content = <PointsManagement transactions={transactions} setTransactions={setTransactions} members={members} {...shared} />; break;
     case 'analytics': content = <AnalyticsPage teams={teams} {...shared} />; break;
+    case 'hallAdmin': content = <HallAdmin notify={notify} lang={language} />; break;
     case 'settings': content = <SettingsPage {...shared} session={session} role={role} orgSettings={orgSettings} onOrgSettings={setOrgSettings} onSessionUpdate={onSessionUpdate} language={language} teams={teams} members={members} tasks={tasks} reports={reports} transactions={transactions} reserves={reserves} />; break;
     default: content = <Dashboard teams={teams} reports={reports} tasks={tasks} members={members} transactions={transactions} greeting={greetingText} greetingSub={greetingSubtitle(language)} {...shared} />;
   }
@@ -524,7 +540,7 @@ function MainApp({ session, onLogout, onSessionUpdate, language, setLanguage }) 
       <nav className="side-nav">
         {navGroups.map(group => <div className="nav-group" key={group.label}><div className="nav-label">{group.label}</div>{group.items.map(item => {
           const Icon = item.icon;
-          return <button key={item.id} className={`nav-item ${activePage === item.id ? 'active' : ''}`} onClick={() => navigate(item.id)}><Icon size={18} strokeWidth={activePage === item.id ? 2.2 : 1.8} /><span>{item.label}</span>{item.badge && <em>{reports.filter(r => r.status === '审核中' || r.status === '待修改').length}</em>}</button>;
+          return <button key={item.id} className={`nav-item ${activePage === item.id ? 'active' : ''}`} onClick={() => item.external ? window.open(item.external, '_blank', 'noopener') : navigate(item.id)}><Icon size={18} strokeWidth={activePage === item.id ? 2.2 : 1.8} /><span>{item.label}</span>{item.badge && <em>{reports.filter(r => r.status === '审核中' || r.status === '待修改').length}</em>}</button>;
         })}</div>)}
       </nav>
       <div className="sidebar-bottom">

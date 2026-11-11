@@ -11,7 +11,7 @@ export const tables = new TablesDB(client);
 // 每张表允许写入的列（Appwrite TablesDB 为严格结构，传入未定义字段会报错）。
 const TABLE_COLUMNS = {
   teams: ['name', 'short', 'color', 'leader', 'description', 'avatars', 'status', 'members', 'tasks', 'done', 'active', 'points', 'workload'],
-  members: ['name', 'english', 'email', 'avatar', 'team', 'role', 'status', 'joined', 'bio', 'points', 'monthPoints', 'totalPoints', 'tasks', 'events', 'years'],
+  members: ['name', 'english', 'email', 'avatar', 'team', 'role', 'status', 'joined', 'bio', 'points', 'monthPoints', 'totalPoints', 'tasks', 'events', 'years', 'first_join_year', 'member_status', 'public_visibility', 'authorization_status', 'introduction'],
   reports: ['team', 'leader', 'month', 'submitted', 'status', 'summary', 'goal', 'next', 'details', 'active', 'praised_member', 'tasks', 'hours', 'points', 'year'],
   tasks: ['title', 'project', 'team', 'owner', 'collaborators', 'due', 'priority', 'type', 'status', 'importance', 'start', 'month', 'deliverable', 'link', 'note', 'progress', 'hours', 'year'],
   points_transactions: ['txid', 'member', 'team', 'type', 'source', 'date', 'status', 'reason', 'rule_id', 'report_id', 'points', 'year', 'month'],
@@ -24,6 +24,12 @@ const TABLE_COLUMNS = {
   report_reviews: ['report_id', 'reviewer', 'action', 'comment', 'created'],
   audit_logs: ['actor', 'action', 'target', 'detail', 'created'],
   reserve_volunteers: ['name', 'english', 'email', 'phone', 'previous_team', 'years', 'availability', 'skills', 'note', 'created'],
+  terms: ['term_number', 'year', 'theme_cn', 'theme_en', 'theme_keywords', 'theme_description', 'event_name', 'event_date', 'venue', 'series', 'leader', 'speaker_count', 'audience_count', 'member_count', 'cover_image', 'poster_image', 'historical_summary', 'verification_status', 'source_count', 'sort'],
+  term_teams: ['term_id', 'name', 'description', 'sort_order'],
+  member_terms: ['member_id', 'term_id', 'team_id', 'role', 'is_team_leader', 'participation_status', 'verification_status', 'note'],
+  historical_sources: ['term_id', 'source_type', 'source_name', 'source_url', 'original_title', 'publication_date', 'extracted_content', 'verification_status', 'verified_by', 'created_at'],
+  legacy_assets: ['term_id', 'member_id', 'team_id', 'asset_type', 'title', 'description', 'file_url', 'visibility', 'authorization_status', 'created_at'],
+  member_stories: ['member_id', 'term_id', 'title', 'content', 'cover_image', 'submission_status', 'visibility', 'authorization_status', 'created_at'],
 };
 
 // 前端表单字段 → 数据库列的映射。
@@ -56,8 +62,23 @@ const cleanRow = (row, table) => {
 };
 
 export async function fetchTable(table) {
-  const res = await tables.listRows({ databaseId: DB, tableId: table, queries: [] });
-  return (res.rows || []).map(row => cleanRow(row, table));
+  // Appwrite 列表接口默认只返回 25 条，需要显式分页拉全量。
+  const pageSize = 100;
+  const all = [];
+  for (let offset = 0; offset < 5000; offset += pageSize) {
+    const res = await tables.listRows({
+      databaseId: DB,
+      tableId: table,
+      queries: [
+        JSON.stringify({ method: 'limit', values: [pageSize] }),
+        JSON.stringify({ method: 'offset', values: [offset] }),
+      ],
+    });
+    const rows = res.rows || [];
+    all.push(...rows);
+    if (rows.length < pageSize) break;
+  }
+  return all.map(row => cleanRow(row, table));
 }
 
 const encodeRow = (table, item, rowId) => {
@@ -112,6 +133,11 @@ export async function syncTable(table, items) {
 
 export async function removeRow(table, id) {
   await tables.deleteRow({ databaseId: DB, tableId: table, rowId: String(id) }).catch(() => {});
+}
+
+// 通用单行写入（纪念馆：届次编辑、故事投稿、授权状态等）。
+export async function saveRow(table, item) {
+  return upsertItem(table, item);
 }
 
 // 组织级配置：问候语模板等。
