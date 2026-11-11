@@ -111,6 +111,7 @@ export default async function handler(req, res) {
     stats,
     integration: {
       appId: maskAppId(integration?.app_id || FEISHU_APP_ID),
+      appName: integration?.app_name || 'TEDxZizhuPark Team Hub',
       chatId: integration?.chat_id || '',
       chatName: integration?.chat_name || '',
       syncInterval: integration?.sync_interval ?? 30,

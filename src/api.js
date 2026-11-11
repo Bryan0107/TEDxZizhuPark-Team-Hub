@@ -11,7 +11,8 @@ export const tables = new TablesDB(client);
 // 每张表允许写入的列（Appwrite TablesDB 为严格结构，传入未定义字段会报错）。
 const TABLE_COLUMNS = {
   teams: ['name', 'short', 'color', 'leader', 'description', 'avatars', 'status', 'members', 'tasks', 'done', 'active', 'points', 'workload'],
-  members: ['name', 'english', 'email', 'avatar', 'team', 'role', 'status', 'joined', 'bio', 'points', 'monthPoints', 'totalPoints', 'tasks', 'events', 'years', 'first_join_year', 'member_status', 'public_visibility', 'authorization_status', 'introduction'],
+  // 飞书字段必须参与往返写回，否则前端保存成员时会把 open_id 等抹掉，导致飞书登录匹配失败。
+  members: ['name', 'english', 'email', 'avatar', 'team', 'role', 'status', 'joined', 'bio', 'points', 'monthPoints', 'totalPoints', 'tasks', 'events', 'years', 'first_join_year', 'member_status', 'public_visibility', 'authorization_status', 'introduction', 'feishu_open_id', 'feishu_union_id', 'feishu_user_id', 'nickname', 'avatar_72', 'avatar_240', 'avatar_640', 'avatar_origin', 'feishu_profile', 'feishu_departments', 'is_login_enabled', 'sync_state', 'last_sync_at'],
   reports: ['team', 'leader', 'month', 'submitted', 'status', 'summary', 'goal', 'next', 'details', 'active', 'praised_member', 'tasks', 'hours', 'points', 'year'],
   tasks: ['title', 'project', 'team', 'owner', 'collaborators', 'due', 'priority', 'type', 'status', 'importance', 'start', 'month', 'deliverable', 'link', 'note', 'progress', 'hours', 'year'],
   points_transactions: ['txid', 'member', 'team', 'type', 'source', 'date', 'status', 'reason', 'rule_id', 'report_id', 'points', 'year', 'month'],

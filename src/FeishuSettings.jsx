@@ -126,7 +126,7 @@ export default function FeishuSettings({ isEn, isAdmin, notify, t }) {
       </div>
 
       <div className="fx-kv-grid">
-        <div><span>{L('应用名称', 'App')}</span><strong>{data?.integration?.appId || checks.appId || '—'}</strong></div>
+        <div><span>{L('应用名称', 'App')}</span><strong>{data?.integration?.appName || 'TEDxZizhuPark Team Hub'}</strong></div>
         <div><span>App ID</span><strong className="fx-mono">{checks.appId || '—'}</strong></div>
         <div><span>{L('最后检查', 'Last check')}</span><strong>{fmt(data?.checkedAt)}</strong></div>
         <div><span>{L('最后同步', 'Last sync')}</span><strong>{fmt(data?.integration?.lastSyncAt)}</strong></div>

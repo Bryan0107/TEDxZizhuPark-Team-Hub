@@ -211,6 +211,13 @@
 | 通知未配置群 | ✅ 返回 `status: failed`，未抛 500，已写日志 |
 | OAuth start | ✅ 302 到 `open.feishu.cn/open-apis/authen/v1/authorize`，带签名 state |
 | 会话读取 | ✅ 返回成员/角色/provider |
+| 生产函数可达 | ✅ `/api/session` 返回 `{"ok":true,"session":null}`（Vercel 生产实测） |
+| 生产 OAuth 跳转 | ✅ 302 → `open.feishu.cn/...authorize`，app_id / redirect_uri / 签名 state 均正确 |
+| 生产未登录守卫 | ✅ `/api/feishu/status` 无 Cookie 时 401 |
+| 浏览器端同步 | ✅ 设置页点「立即增量同步」→ 读取 1 位成员、未变化 1、成员-部门关联 1，耗时 5.4 s |
+| 飞书会话 → 应用 | ✅ 注入 `th_session` 后首页显示「早上好，Bryan FU 付天一。」，头像取自 `avatar_240`，角色 admin |
+| 前端写回不丢飞书字段 | ✅ 页面同步后 `feishu_open_id` / `union_id` / `avatar_240` / `is_login_enabled` 全部保留 |
+| 移动端适配 | ✅ 390px `scrollWidth=383`，无横向溢出、无 NaN |
 | 飞书扫码登录闭环 | ⏸ 待第 5 节「重定向 URL」配置后验证 |
 
 ---
@@ -227,6 +234,7 @@
 | 头像落对象存储 | 当前直接引用飞书 CDN URL | 若出现 URL 失效再加下载+Appwrite Storage 方案 |
 | 服务端行级权限 | 表权限仍为 `any`（Appwrite 免费档 + 既有架构） | 若要对外，需要 Appwrite 付费档启用 Row Security |
 | 通知失败自动重投队列 | 当前为即时 3 次重试 + 文本降级 | 可加定时扫描 `notification_logs(status=failed)` 重投 |
+| Appwrite 邮箱账号登录异常 | `admin@tedxzizhupark.com` 及新建邮箱账号登录返回 `general_unauthorized_scope`（`leader@` / `member@` 正常），疑似 Appwrite 项目侧账号/策略问题 | 建议在 Appwrite 控制台重建管理员账号或检查 Auth 安全策略；**不影响飞书登录**（飞书链路已实测可用） |
 
 ---
 
