@@ -24,7 +24,7 @@ export const getFeishuSession = () => req('/api/session').catch(() => ({ ok: fal
 export const logoutFeishu = () => req('/api/session', { method: 'DELETE' }).catch(() => ({ ok: false }));
 
 /** 连接状态自检。 */
-export const feishuStatus = () => req('/api/feishu/status').catch(err => ({ ok: false, error: err.message }));
+export const feishuStatus = (refresh = false) => req(`/api/feishu/status${refresh ? '?refresh=1' : ''}`).catch(err => ({ ok: false, error: err.message }));
 
 /** 触发同步。 */
 export const feishuSync = (mode = 'incremental') => req('/api/feishu/sync', { method: 'POST', body: JSON.stringify({ mode }) });

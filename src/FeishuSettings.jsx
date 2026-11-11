@@ -38,9 +38,9 @@ export default function FeishuSettings({ isEn, isAdmin, notify, t }) {
   const [logType, setLogType] = useState('sync');
   const [logs, setLogs] = useState({ items: [], total: 0, loading: false });
 
-  const loadStatus = async (silent = false) => {
+  const loadStatus = async (silent = false, force = false) => {
     if (!silent) setLoading(true);
-    const res = await feishuStatus();
+    const res = await feishuStatus(force);
     setData(res);
     if (res?.ok) {
       setChatId(res.integration?.chatId || '');
@@ -70,7 +70,7 @@ export default function FeishuSettings({ isEn, isAdmin, notify, t }) {
     setSyncResult(res);
     if (res?.ok) {
       notify(L(`同步完成：新增 ${res.created}，更新 ${res.updated}，待确认离开 ${res.pendingLeave}`, `Sync done: +${res.created} / ~${res.updated} / pending ${res.pendingLeave}`));
-      await loadStatus(true);
+      await loadStatus(true, true);
       await loadLogs('sync');
     } else {
       notify(L(`同步失败：${res?.error || '未知错误'}`, `Sync failed: ${res?.error || 'unknown'}`));
@@ -94,7 +94,7 @@ export default function FeishuSettings({ isEn, isAdmin, notify, t }) {
     setTesting(false);
     if (res?.status === 'sent') notify(L('测试消息已发送，请到飞书群查看', 'Test message sent — check your Feishu group'));
     else notify(L(`发送失败：${res?.error || '未知错误'}`, `Send failed: ${res?.error || 'unknown'}`));
-    await loadStatus(true);
+    await loadStatus(true, true);
     await loadLogs('notification');
   };
 
@@ -157,7 +157,7 @@ export default function FeishuSettings({ isEn, isAdmin, notify, t }) {
       )}
 
       <div className="fx-actions">
-        <button className="button secondary" onClick={() => loadStatus()}><RefreshCw size={15} />{L('重新检查连接', 'Re-check')}</button>
+        <button className="button secondary" onClick={() => loadStatus(false, true)}><RefreshCw size={15} />{L('重新检查连接', 'Re-check')}</button>
         <span className="fx-hint">{L(`通讯录 ${stats.members ?? 0} 位成员 · 其中 ${stats.fromFeishu ?? 0} 位来自飞书 · 待确认离开 ${stats.pendingLeave ?? 0} 位`, `${stats.members ?? 0} members · ${stats.fromFeishu ?? 0} from Feishu · ${stats.pendingLeave ?? 0} pending leave`)}</span>
       </div>
     </section>

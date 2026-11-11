@@ -12,12 +12,18 @@ import {
 
 const maskAppId = id => (id && id.length > 10 ? `${id.slice(0, 6)}••••${id.slice(-4)}` : id || '');
 
+// 状态页每次打开都会拉全量通讯录（逐部门），加 60 秒实例内缓存，刷新按钮可强制刷新。
+const CACHE_TTL = 60_000;
+let statusCache = { at: 0, checks: null, stats: null };
+
 export default async function handler(req, res) {
   const session = requireSession(req, res);
   if (!session) return;
 
-  const checks = {};
+  const force = req.query?.refresh === '1' || req.query?.refresh === 'true';
   const integration = await getIntegration().catch(() => null);
+  const cached = !force && statusCache.checks && Date.now() - statusCache.at < CACHE_TTL ? statusCache : null;
+  const checks = cached ? cached.checks : {};
 
   checks.configured = isConfigured();
   checks.appId = maskAppId(FEISHU_APP_ID);
@@ -27,7 +33,7 @@ export default async function handler(req, res) {
   checks.sessionSecretConfigured = Boolean(process.env.TEAM_HUB_SESSION_SECRET);
   checks.serverKeyConfigured = Boolean(process.env.APPWRITE_KEY || process.env.APPWRITE_API_KEY);
 
-  if (checks.configured) {
+  if (!cached && checks.configured) {
     try {
       await getTenantToken(true);
       checks.token = { ok: true };
@@ -77,8 +83,8 @@ export default async function handler(req, res) {
   }
 
   // 本地统计（Team Hub 侧）
-  let stats = { members: 0, fromFeishu: 0, pendingLeave: 0, departments: 0, notifications: 0 };
-  try {
+  let stats = cached ? cached.stats : { members: 0, fromFeishu: 0, pendingLeave: 0, departments: 0, notifications: 0 };
+  if (!cached) try {
     const members = await listAll('members');
     stats.members = members.length;
     stats.fromFeishu = members.filter(m => m.feishu_open_id).length;
@@ -86,6 +92,7 @@ export default async function handler(req, res) {
     stats.departments = (await listAll('departments')).length;
     stats.notifications = (await listAll('notification_logs')).length;
   } catch { /* 数据库暂不可用时返回 0 */ }
+  if (!cached) statusCache = { at: Date.now(), checks, stats };
 
   const status = !checks.configured ? 'unconfigured'
     : checks.token?.ok && checks.contact?.ok ? 'connected'
