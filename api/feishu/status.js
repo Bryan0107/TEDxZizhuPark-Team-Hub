@@ -83,7 +83,7 @@ export default async function handler(req, res) {
   }
 
   // 本地统计（Team Hub 侧）
-  let stats = cached ? cached.stats : { members: 0, fromFeishu: 0, pendingLeave: 0, departments: 0, notifications: 0 };
+  let stats = cached ? cached.stats : { members: 0, fromFeishu: 0, pendingLeave: 0, departments: 0, notifications: 0, reserve: 0 };
   if (!cached) try {
     const members = await listAll('members');
     stats.members = members.length;
@@ -91,6 +91,7 @@ export default async function handler(req, res) {
     stats.pendingLeave = members.filter(m => m.sync_state === 'pending_leave').length;
     stats.departments = (await listAll('departments')).length;
     stats.notifications = (await listAll('notification_logs')).length;
+    stats.reserve = (await listAll('reserve_volunteers')).length;
   } catch { /* 数据库暂不可用时返回 0 */ }
   if (!cached) statusCache = { at: Date.now(), checks, stats };
 

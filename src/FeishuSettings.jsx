@@ -177,7 +177,7 @@ export default function FeishuSettings({ isEn, isAdmin, notify, t }) {
           [L('同步成员数', 'Synced members'), syncResult?.total ?? stats.fromFeishu ?? 0],
           [L('本次新增', 'Created'), syncResult?.created ?? 0],
           [L('本次更新', 'Updated'), syncResult?.updated ?? 0],
-          [L('后备志愿者', 'Reserve'), syncResult?.reserve ?? 0],
+          [L('后备志愿者', 'Reserve'), syncResult?.reserve ?? stats.reserve ?? 0],
           [L('待确认离开', 'Pending leave'), syncResult?.pendingLeave ?? stats.pendingLeave ?? 0],
           [L('失败条目', 'Failed'), syncResult?.failed ?? 0],
         ].map(([label, value]) => (
