@@ -10,8 +10,15 @@
  * - 失败不影响已有数据
  */
 import { decryptEvent, verifyEventToken, getUser, getDepartment, mapFeishuUser, mapFeishuDepartment, getTenantToken, isConfigured } from '../_lib/feishu.js';
-import { upsert, logEvent, eventAlreadyHandled, findOne } from '../_lib/store.js';
-import { notifyEvent } from '../_lib/notify.js';
+
+/**
+ * 飞书要求回调地址在 3 秒内响应，否则控制台会报「请求3秒超时」。
+ * 因此 URL Verification 路径**不得**加载 Appwrite SDK：
+ * store.js / notify.js（依赖 node-appwrite）全部改为用时再 import，
+ * 冷启动只剩 crypto + fetch，challenge 通常 100ms 内返回。
+ */
+const store = () => import('../_lib/store.js');
+const notifier = () => import('../_lib/notify.js');
 
 export const config = { maxDuration: 30 };
 
@@ -34,16 +41,21 @@ export default async function handler(req, res) {
     }
   }
 
-  // 2) URL Verification
+  // 2) URL Verification —— 关键路径，不触碰数据库，尽快返回
   if (payload.type === 'url_verification' || payload.challenge) {
+    const started = Date.now();
     const check = verifyEventToken(payload.token);
     if (!check.ok) return res.status(403).json({ code: 403, msg: 'invalid verification token' });
+    console.log('[feishu-events] url_verification ok in', Date.now() - started, 'ms');
     return res.status(200).json({ challenge: payload.challenge });
   }
 
   const header = payload.header || {};
   const eventType = header.event_type || payload.event?.type || '';
   const eventId = header.event_id || payload.uuid || '';
+
+  const { upsert, logEvent, eventAlreadyHandled, findOne } = await store();
+  const { notifyEvent } = await notifier();
 
   // 3) token 校验
   const check = verifyEventToken(header.token || payload.token);
