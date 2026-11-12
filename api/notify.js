@@ -5,7 +5,7 @@
  * 供前端在业务操作成功后调用（积分变动、月报提交、活动创建等）。
  * 必须登录；发送失败不影响业务（接口总是返回 200 + status），前端只做提示。
  */
-import { requireSession } from './_lib/session.js';
+import { requireSessionOrAppwrite } from './_lib/session.js';
 import { notifyEvent, EVENT_TYPES, sendReportReminders } from './_lib/notify.js';
 
 export const config = { maxDuration: 30 };
@@ -13,7 +13,8 @@ export const config = { maxDuration: 30 };
 export default async function handler(req, res) {
   if (req.method !== 'POST') return res.status(405).json({ ok: false, error: 'METHOD_NOT_ALLOWED' });
 
-  const session = requireSession(req, res);
+  // 飞书 OAuth 会话与 Appwrite 邮箱密码会话都接受（否则用密码登录时通知会被静默吞掉）。
+  const session = await requireSessionOrAppwrite(req, res);
   if (!session) return;
 
   // 月报催报：服务端计算「当月未提交的团队」，用飞书单聊提醒对应组长。

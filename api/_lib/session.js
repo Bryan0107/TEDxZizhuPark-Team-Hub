@@ -94,3 +94,58 @@ export function requireAdmin(req, res) {
   }
   return session;
 }
+
+// ── Appwrite 邮箱密码会话（与飞书 OAuth 会话并存的第二种登录方式） ──────
+const APPWRITE_ENDPOINT = process.env.APPWRITE_ENDPOINT || 'https://sgp.cloud.appwrite.io/v1';
+const APPWRITE_PROJECT = process.env.APPWRITE_PROJECT_ID || '6af1211f00086491c07c';
+
+/**
+ * 用 Appwrite 的会话 Cookie 校验身份。
+ * 前端用邮箱密码登录时只有 Appwrite 会话，没有 Team Hub 的 th_session，
+ * 这里向 Appwrite 换一次 /account 得到真实用户，再按 users 表判定角色。
+ */
+export async function readAppwriteSession(req) {
+  const cookie = req.headers?.cookie || '';
+  if (!/a_session_/.test(cookie)) return null;
+  try {
+    const resp = await fetch(`${APPWRITE_ENDPOINT}/account`, {
+      headers: { 'X-Appwrite-Project': APPWRITE_PROJECT, cookie },
+    });
+    if (!resp.ok) return null;
+    const me = await resp.json();
+    if (!me?.$id) return null;
+
+    let role = 'member';
+    try {
+      const { listAll } = await import('./store.js');
+      const accounts = await listAll('users').catch(() => []);
+      const hit = accounts.find(u => String(u.email || '').toLowerCase() === String(me.email || '').toLowerCase());
+      if (hit?.role) role = hit.role === 'reviewer' ? 'admin' : hit.role;
+    } catch { /* 读不到账号表时按普通成员处理 */ }
+
+    return { sub: me.$id, name: me.name || me.email, email: me.email, role, provider: 'appwrite' };
+  } catch {
+    return null;
+  }
+}
+
+/** 飞书会话或 Appwrite 会话，任一有效即可。 */
+export async function requireSessionOrAppwrite(req, res) {
+  const session = readSession(req);
+  if (session) return session;
+  const appwrite = await readAppwriteSession(req);
+  if (appwrite) return appwrite;
+  res.status(401).json({ ok: false, error: 'UNAUTHORIZED', message: '请先登录' });
+  return null;
+}
+
+/** 管理员校验（两种登录方式都接受）。 */
+export async function requireAdminOrAppwrite(req, res) {
+  const session = await requireSessionOrAppwrite(req, res);
+  if (!session) return null;
+  if (session.role !== 'admin') {
+    res.status(403).json({ ok: false, error: 'FORBIDDEN', message: '仅管理员可执行该操作' });
+    return null;
+  }
+  return session;
+}

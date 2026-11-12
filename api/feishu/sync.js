@@ -11,7 +11,7 @@
  * 说明：飞书通讯录 API 没有真正的增量游标，incremental 与 full 使用同一份全量数据，
  *      但 incremental 会跳过未变化成员的写库，仅更新差异与新成员（更省配额）。
  */
-import { requireAdmin } from '../_lib/session.js';
+import { requireAdminOrAppwrite } from '../_lib/session.js';
 import { runSync, buildMemberPatch, getFeishuOrganization } from '../_lib/sync.js';
 import { upsert, logSync } from '../_lib/store.js';
 
@@ -32,7 +32,7 @@ export default async function handler(req, res) {
   // 单人同步 / 组织快照需要管理员会话（cron 不调用这两类）
   let session = null;
   if (!isCron) {
-    session = requireAdmin(req, res);
+    session = await requireAdminOrAppwrite(req, res);
     if (!session) return;
   }
 

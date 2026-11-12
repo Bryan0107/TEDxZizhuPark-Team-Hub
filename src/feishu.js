@@ -66,7 +66,11 @@ export const FEISHU_EVENTS = [
   ['member.created', '成员加入通知', '有新成员通过通讯录同步建档时发送'],
   ['member.updated', '成员信息变更通知', '成员姓名、头像、部门等资料变化时发送'],
   ['member.status_changed', '成员状态变化通知', '成员离开待确认或状态切换时发送'],
-  ['points.created', '积分变动通知', '积分入账、调整时发送'],
+  ['points.created', '积分入账通知', '任务完成、积分入账时发送'],
+  ['points.updated', '积分调整通知', '管理员手动调整积分时发送'],
+  ['points.reviewed', '积分审核结果通知', '待审核积分通过或被驳回时发送'],
   ['workload.submitted', '月度工作量提交通知', '组长提交月报时发送'],
+  ['workload.approved', '月报审核通过通知', '月报审核通过、积分入账时发送'],
+  ['workload.returned', '月报退回通知', '月报被退回要求修改时发送'],
   ['event.created', '活动创建通知', '新建活动或任务时发送'],
 ];
