@@ -434,6 +434,30 @@
 .login-feishu svg:last-child{margin-left:auto;color:#a3a39d}
 @media(max-width:420px){.login-feishu{font-size:13.5px;padding:12px 14px}}
 
+/* ==== Sidebar: compact header & denser nav ==== */
+/* 1) 结构修复：flex 子项必须 min-height:0，否则 side-nav 按内容撑满，底部区域被挤出视口 */
+.side-nav{min-height:0;padding-bottom:6px;scrollbar-width:thin}
+.side-nav::-webkit-scrollbar{width:5px}
+.side-nav::-webkit-scrollbar-thumb{background:#e2e2dc;border-radius:3px}
+.side-nav::-webkit-scrollbar-thumb:hover{background:#cfcfc8}
+.side-nav::-webkit-scrollbar-track{background:transparent}
+/* 2) 品牌区缩小（用户反馈：100% 缩放仍占太多高度） */
+.sidebar .brand{min-height:0;padding:12px 6px 6px}
+.sidebar .brand-lockup{max-width:138px}
+.sidebar .year-switch{margin:0 2px 10px;padding:6px 10px;gap:8px;border-radius:6px}
+.sidebar .year-switch svg:first-child{width:14px;height:14px;flex:none}
+/* 3) 导航密度收紧（只压行高与内边距，不缩小字号） */
+.nav-group{margin:0 0 10px}
+.nav-label{line-height:17px;margin:0 0 2px;letter-spacing:1px}
+.nav-item{padding:7px 11px;margin:1px 0;gap:10px}
+.nav-item svg{width:16px;height:16px}
+.nav-item.active:before{top:7px;bottom:7px}
+/* 4) 底部区域收紧 */
+.sidebar-bottom{padding:6px 0 8px;flex:none}
+.side-help{margin:5px 3px 7px;padding:8px 9px}
+.side-help>span{width:24px;height:24px}
+.side-help>span svg{width:15px;height:15px}
+
 /* ==== Member contribution heatmap (real data) ==== */
 .contribution-calendar i.future{opacity:.35}
 .member-tab-body{padding:2px 0}
