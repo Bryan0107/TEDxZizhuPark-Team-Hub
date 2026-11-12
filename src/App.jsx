@@ -715,14 +715,50 @@ function MainApp({ session, onLogout, onSessionUpdate, language, setLanguage }) 
     ].slice(0, 6);
   }, [search, members, tasks, teams, language, t, isEn]);
 
-  const approveReport = report => {
+  const approveReport = async report => {
     setReports(prev => prev.map(r => r.id === report.id ? { ...r, status: '已通过' } : r));
+    // 审核通过 → 按月报里登记的建议积分，逐位成员生成积分流水（同一月报不重复入账）
+    let creditedCount = 0;
+    let creditedPoints = 0;
+    try {
+      const rows = await fetchTable('monthly_member_records');
+      const now = new Date();
+      const pending = rows
+        .filter(row => String(row.report_id) === String(report.id) && Number(row.suggested_points) > 0)
+        .map((row, i) => ({
+          id: `tx_report_${report.id}_${i}`,
+          txid: `tx_report_${report.id}_${i}`,
+          member: row.member,
+          team: report.team || '',
+          type: '任务贡献',
+          source: `${report.team || ''} ${report.month || ''} 月报`,
+          date: `${now.getMonth() + 1}月${now.getDate()}日`,
+          status: '已入账',
+          points: Number(row.suggested_points) || 0,
+          reason: '月报审核通过自动入账',
+          report_id: String(report.id),
+          year: now.getFullYear(),
+          month: now.getMonth() + 1,
+        }))
+        .filter(tx => !transactions.some(exist => exist.id === tx.id));
+      if (pending.length) {
+        setTransactions(prev => [...pending, ...prev]);
+        creditedCount = pending.length;
+        creditedPoints = pending.reduce((sum, tx) => sum + tx.points, 0);
+      }
+    } catch (err) {
+      console.warn('[Team Hub] 月报积分入账失败', err);
+    }
     closeModal();
-    notify(`${report.team}月报已审核通过，已通过飞书通知组长`);
+    notify(creditedCount
+      ? `${report.team}月报已通过审核，${creditedCount} 位成员共 ${creditedPoints} 分已入账`
+      : `${report.team}月报已审核通过（本月报没有登记成员建议积分）`);
     notifyFeishu('workload.approved', {
       title: '月报审核通过',
-      summary: `${report.team} 的 ${report.month || ''} 月报已通过审核。`,
-      fields: [['团队', report.team || '—'], ['月份', report.month || '—'], ['任务数', report.tasks ?? 0], ['工作量', `${report.hours ?? 0} h`], ['审核人', displayName]],
+      summary: creditedCount
+        ? `${report.team} 的 ${report.month || ''} 月报已通过审核，${creditedCount} 位成员共 ${creditedPoints} 分已入账。`
+        : `${report.team} 的 ${report.month || ''} 月报已通过审核。`,
+      fields: [['团队', report.team || '—'], ['月份', report.month || '—'], ['任务数', report.tasks ?? 0], ['工作量', `${report.hours ?? 0} h`], ['积分入账', `${creditedCount} 人 / ${creditedPoints} 分`], ['审核人', displayName]],
     });
   };
   const returnReport = report => {
