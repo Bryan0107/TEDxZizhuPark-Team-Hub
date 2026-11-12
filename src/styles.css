@@ -533,3 +533,9 @@
 .toolbar-right .select-field:focus{outline:none;border-color:#c9c9c2;box-shadow:0 0 0 3px rgba(230,43,30,.07)}
 .kanban-card{cursor:pointer}
 .kanban-card:hover{border-color:#e0e0da;box-shadow:0 6px 18px rgba(20,20,15,.06)}
+
+/* ==== 数字输入：去掉无用的上下拨杆（spinner） ==== */
+input[type=number]::-webkit-outer-spin-button,
+input[type=number]::-webkit-inner-spin-button{-webkit-appearance:none;appearance:none;margin:0}
+input[type=number]{-moz-appearance:textfield;appearance:textfield}
+.number-input input{width:100%;padding-right:34px}

@@ -1578,7 +1578,14 @@ function TaskFields({ form, update, teams = [], members = [], isEn }) {
       </Field>
       <Field label={L('完成积分', 'Task points')} hint={L('任务完成后自动记入负责人积分账户', 'Credited to the owner once the task is completed')}>
         <div className="number-input">
-          <input type="number" min="0" max="100" value={form.points} onChange={e => update('points', Math.max(0, Number(e.target.value) || 0))} />
+          <input
+            type="text"
+            inputMode="numeric"
+            autoComplete="off"
+            placeholder="0"
+            value={form.points}
+            onChange={e => update('points', e.target.value.replace(/[^\d]/g, '').replace(/^0+(?=\d)/, '').slice(0, 3))}
+          />
           <span>{L('分', 'pts')}</span>
         </div>
         {points > 0 && form.owner ? <small className="field-inline-hint">{L(`完成后 ${form.owner} 将获得 ${points} 分`, `${form.owner} earns ${points} pts on completion`)}</small> : null}
@@ -1595,7 +1602,7 @@ function TaskForm({ teams = [], members = [], onClose, onSave, isEn }) {
   const [form, setForm] = useState({
     title: '', project: '2026 年度大会', team: teams[0]?.name || '', owner: '',
     due: '2026-11-20', status: '未开始', priority: '普通', type: '活动策划',
-    points: 3, description: '',
+    points: '3', description: '',
   });
   const [error, setError] = useState('');
   const update = (key, value) => setForm(prev => ({ ...prev, [key]: value }));
@@ -1631,7 +1638,7 @@ function TaskDetail({ task, teams = [], members = [], transactions = [], onClose
     due: task.due || '',
     status: task.status || '未开始',
     priority: task.priority || '普通',
-    points: Number(task.points) || 0,
+    points: task.points ? String(task.points) : '',
     description: task.note || task.description || '',
   });
   const [error, setError] = useState('');
@@ -2069,10 +2076,15 @@ function MemberForm({ onClose, onSave }) {
 function MailIcon() { return <Send size={17} />; }
 
 function PointsAdjust({ members, onClose, onSave }) {
-  const [form, setForm] = useState({ member: '', team: '', type: '特别贡献', source: '', points: 5, direction: '增加积分', reason: '' });
+  const [form, setForm] = useState({ member: '', team: '', type: '特别贡献', source: '', points: '5', direction: '增加积分', reason: '' });
   const [error, setError] = useState('');
-  const submit = () => { if (!form.member || !form.source || !form.reason) { setError('请填写成员、积分来源与调整原因，确保记录可追溯'); return; } onSave({ ...form, points: form.direction === '扣减积分' ? -Math.abs(form.points) : Math.abs(form.points) }); };
-  return <Modal title="手动调整积分" subtitle="所有调整将生成新流水并保留操作记录" onClose={onClose} footer={<><Button variant="secondary" onClick={onClose}>取消</Button><Button icon={Check} onClick={submit}>确认调整并入账</Button></>}><div className="adjust-warning"><Info size={17} /><span>历史积分流水不可直接删除。如需修正，请通过反向调整生成补充流水。</span></div><div className="form-grid"><Field label="调整成员" required full><input value={form.member} onChange={e => setForm(prev => ({ ...prev, member: e.target.value }))} placeholder="填写成员姓名" /></Field><Field label="调整方向"><div className="radio-group"><button className={form.direction === '增加积分' ? 'selected' : ''} onClick={() => setForm(prev => ({ ...prev, direction: '增加积分' }))}><i />增加积分</button><button className={form.direction === '扣减积分' ? 'selected' : ''} onClick={() => setForm(prev => ({ ...prev, direction: '扣减积分' }))}><i />扣减积分</button></div></Field><Field label="调整积分" required><div className="number-input"><input type="number" min="1" value={form.points} onChange={e => setForm(prev => ({ ...prev, points: Number(e.target.value) }))} /><span>分</span></div></Field><Field label="积分类型"><select value={form.type} onChange={e => setForm(prev => ({ ...prev, type: e.target.value }))}><option>特别贡献</option><option>任务贡献</option><option>组织贡献</option><option>社区贡献</option></select></Field><Field label="关联团队"><input value={form.team} disabled /></Field><Field label="积分来源" required full><input placeholder="例如：年度大会紧急视觉物料支援" value={form.source} onChange={e => setForm(prev => ({ ...prev, source: e.target.value }))} /></Field><Field label="调整原因" required full><textarea rows="3" placeholder="请说明本次调整的具体原因，供成员与审计查看…" value={form.reason} onChange={e => setForm(prev => ({ ...prev, reason: e.target.value }))} /></Field>{error && <span className="field-error field-full">{error}</span>}</div></Modal>;
+  const submit = () => {
+    if (!form.member || !form.source || !form.reason) { setError('请填写成员、积分来源与调整原因，确保记录可追溯'); return; }
+    const points = Math.abs(Number(form.points) || 0);
+    if (!points) { setError('请填写大于 0 的积分数'); return; }
+    onSave({ ...form, points: form.direction === '扣减积分' ? -points : points });
+  };
+  return <Modal title="手动调整积分" subtitle="所有调整将生成新流水并保留操作记录" onClose={onClose} footer={<><Button variant="secondary" onClick={onClose}>取消</Button><Button icon={Check} onClick={submit}>确认调整并入账</Button></>}><div className="adjust-warning"><Info size={17} /><span>历史积分流水不可直接删除。如需修正，请通过反向调整生成补充流水。</span></div><div className="form-grid"><Field label="调整成员" required full><input value={form.member} onChange={e => setForm(prev => ({ ...prev, member: e.target.value }))} placeholder="填写成员姓名" /></Field><Field label="调整方向"><div className="radio-group"><button className={form.direction === '增加积分' ? 'selected' : ''} onClick={() => setForm(prev => ({ ...prev, direction: '增加积分' }))}><i />增加积分</button><button className={form.direction === '扣减积分' ? 'selected' : ''} onClick={() => setForm(prev => ({ ...prev, direction: '扣减积分' }))}><i />扣减积分</button></div></Field><Field label="调整积分" required><div className="number-input"><input type="text" inputMode="numeric" autoComplete="off" placeholder="0" value={form.points} onChange={e => setForm(prev => ({ ...prev, points: e.target.value.replace(/[^\d]/g, '').replace(/^0+(?=\d)/, '').slice(0, 4) }))} /><span>分</span></div></Field><Field label="积分类型"><select value={form.type} onChange={e => setForm(prev => ({ ...prev, type: e.target.value }))}><option>特别贡献</option><option>任务贡献</option><option>组织贡献</option><option>社区贡献</option></select></Field><Field label="关联团队"><input value={form.team} disabled /></Field><Field label="积分来源" required full><input placeholder="例如：年度大会紧急视觉物料支援" value={form.source} onChange={e => setForm(prev => ({ ...prev, source: e.target.value }))} /></Field><Field label="调整原因" required full><textarea rows="3" placeholder="请说明本次调整的具体原因，供成员与审计查看…" value={form.reason} onChange={e => setForm(prev => ({ ...prev, reason: e.target.value }))} /></Field>{error && <span className="field-error field-full">{error}</span>}</div></Modal>;
 }
 function TeamDetail({ team, reports = [], tasks = [], members = [], onClose, navigate, isEn }) {
   const L = (zh, en) => (isEn ? en : zh);
