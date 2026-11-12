@@ -226,6 +226,30 @@ function Avatar({ name, src, size = 'md', className = '' }) {
   );
 }
 
+/** 姓名归一化：去掉空格、间隔号、括号、连字符，便于匹配「付天一 / Bryan FU 付天一」这类写法差异。 */
+const squashName = value => String(value || '').toLowerCase().replace(/[\s·.\-_()（）]/g, '');
+
+/**
+ * 把任务/流水里存的负责人字符串解析为成员档案。
+ * 优先精确匹配，其次英文名，最后做归一化包含匹配（历史档案里常有同名旧记录，优先取有头像的在编成员）。
+ */
+function resolveMember(members = [], name = '') {
+  const pool = (members || []).filter(Boolean);
+  if (!name || !pool.length) return null;
+  const exact = pool.find(m => m.name === name);
+  if (exact) return exact;
+  const target = squashName(name);
+  if (!target) return null;
+  const byEnglish = pool.find(m => squashName(m.english) && squashName(m.english) === target);
+  if (byEnglish) return byEnglish;
+  const partial = pool.filter(m => {
+    const candidate = squashName(m.name);
+    return candidate && (candidate === target || candidate.includes(target) || target.includes(candidate));
+  });
+  if (!partial.length) return null;
+  return partial.find(m => m.avatar || m.avatar_240 || m.avatar_72) || partial[0];
+}
+
 function AvatarStack({ names = [], max = 3 }) {
   return <div className="avatar-stack">{names.slice(0, max).map((n, i) => <Avatar key={i} name={n} size="xs" />)}{names.length > max && <span className="avatar avatar-xs avatar-more">+{names.length - max}</span>}</div>;
 }
@@ -636,7 +660,8 @@ function MainApp({ session, onLogout, onSessionUpdate, language, setLanguage }) 
   /** 任务积分入账：按任务 id 生成唯一流水，重复调用不会重复记账。 */
   const creditTaskPoints = (task, { silent = false } = {}) => {
     const points = Number(task?.points) || 0;
-    const owner = task?.owner || '';
+    const ownerMember = resolveMember(activeMembers, task?.owner) || resolveMember(members, task?.owner);
+    const owner = ownerMember?.name || task?.owner || '';
     if (!owner || points <= 0 || !task?.id) return false;
     const txId = `tx_task_${task.id}`;
     if (transactions.some(tx => tx.id === txId)) return false;
@@ -645,7 +670,7 @@ function MainApp({ session, onLogout, onSessionUpdate, language, setLanguage }) 
       id: txId,
       txid: txId,
       member: owner,
-      team: task.team || '',
+      team: task.team || ownerMember?.team || '',
       type: '任务贡献',
       source: `任务完成：${task.title || ''}`,
       date: `${now.getMonth() + 1}月${now.getDate()}日`,
@@ -825,7 +850,7 @@ function MainApp({ session, onLogout, onSessionUpdate, language, setLanguage }) 
       <footer className="app-footer"><span>TEDxZizhuPark Team Hub · {t('footerTagline')}</span><span>Ideas change everything.</span></footer>
     </div>
 
-    {modal?.type === 'newTask' && <TaskForm teams={teams} members={activeMembers} isEn={isEn} onClose={closeModal} onSave={task => {
+    {modal?.type === 'newTask' && <TaskForm teams={teams} members={activeMembers} defaultTeam={myMember?.team || ''} defaultOwner={myMember?.name || ''} isEn={isEn} onClose={closeModal} onSave={task => {
       const created = { ...task, id: Date.now(), progress: task.status === '已完成' ? 100 : 0, collaborators: task.owner ? [task.owner] : [] };
       setTasks(prev => [created, ...prev]);
       const credited = created.status === '已完成' ? creditTaskPoints(created, { silent: true }) : false;
@@ -1029,7 +1054,18 @@ function Dashboard({ teams, reports, tasks, members, transactions, monthlyTrend 
     </section>
 
     <section className="card activity-card"><div className="card-header"><div><h2>{t('recentActivity')}</h2><p>{t('recentActivitySub')}</p></div><button className="text-button" onClick={() => navigate('tasks')}>{t('allActivity')}<ChevronRight size={14} /></button></div>
-      {recent.length ? <div className="activity-list">{recent.map(task => <div className="activity-item" key={task.id}><Avatar name={task.owner || (isEn ? 'Team' : '团队')} size="sm" /><div><p><strong>{task.owner || (isEn ? 'Team' : '团队')}</strong> {isEn ? `updated “${task.title}”` : `更新了任务「${task.title}」`}</p><span>{task.team} · {task.status}</span></div><span className="activity-type"><CheckSquare size={16} /></span></div>)}</div> : <EmptyState title={isEn ? 'No activity yet' : '暂无团队动态'} description={isEn ? 'New tasks will show up here.' : '新建任务后，这里会记录团队动态。'} />}
+      {recent.length ? <div className="activity-list">{recent.map(task => {
+        const owner = resolveMember(members, task.owner);
+        const ownerName = owner?.name || task.owner || (isEn ? 'Team' : '团队');
+        return <div className="activity-item" key={task.id}>
+          <Avatar name={ownerName} src={owner?.avatar} size="sm" />
+          <div>
+            <p><strong>{ownerName}</strong> {isEn ? `updated “${task.title}”` : `更新了任务「${task.title}」`}</p>
+            <span>{task.team || '—'} · {displayValue(task.status, isEn ? 'en' : 'zh')}</span>
+          </div>
+          <span className="activity-type">{task.status === '已完成' ? <CheckSquare size={16} /> : <Clock3 size={16} />}</span>
+        </div>;
+      })}</div> : <EmptyState title={isEn ? 'No activity yet' : '暂无团队动态'} description={isEn ? 'New tasks will show up here.' : '新建任务后，这里会记录团队动态。'} />}
     </section>
   </div>;
 }
@@ -1673,7 +1709,8 @@ function MemberPicker({ value, members = [], onChange, placeholder, isEn }) {
   const [open, setOpen] = useState(false);
   const [query, setQuery] = useState('');
   const wrapRef = useRef(null);
-  const selected = members.find(m => m.name === value) || null;
+  const selected = resolveMember(members, value);
+  const selectedName = selected?.name || '';
   const keyword = open ? query : (selected?.name || value || '');
 
   useEffect(() => {
@@ -1702,10 +1739,10 @@ function MemberPicker({ value, members = [], onChange, placeholder, isEn }) {
       {open && (
         <div className="member-picker-menu">
           {list.length ? list.map(m => (
-            <button type="button" key={m.id} className={m.name === value ? 'selected' : ''} onMouseDown={e => e.preventDefault()} onClick={() => { onChange(m.name); setQuery(''); setOpen(false); }}>
+            <button type="button" key={m.id} className={m.name === selectedName ? 'selected' : ''} onMouseDown={e => e.preventDefault()} onClick={() => { onChange(m.name); setQuery(''); setOpen(false); }}>
               <Avatar name={m.name} src={m.avatar} size="xs" />
               <div><strong>{m.name}</strong><small>{m.team || '—'}{m.role === '组长' ? (isEn ? ' · Lead' : ' · 组长') : ''}</small></div>
-              {m.name === value ? <Check size={14} /> : null}
+              {m.name === selectedName ? <Check size={14} /> : null}
             </button>
           )) : <div className="member-picker-empty">{isEn ? 'No matching member' : '没有匹配的成员'}</div>}
         </div>
@@ -1718,7 +1755,7 @@ function MemberPicker({ value, members = [], onChange, placeholder, isEn }) {
 function TaskFields({ form, update, teams = [], members = [], isEn }) {
   const L = (zh, en) => (isEn ? en : zh);
   const points = Number(form.points) || 0;
-  const matchedOwner = members.find(m => m.name === form.owner);
+  const matchedOwner = resolveMember(members, form.owner);
   return (
     <div className="form-grid">
       <Field label={L('任务名称', 'Task title')} required full>
@@ -1738,7 +1775,7 @@ function TaskFields({ form, update, teams = [], members = [], isEn }) {
         </select>
       </Field>
       <Field label={L('任务负责人', 'Owner')} required hint={matchedOwner ? `${matchedOwner.team || ''}${matchedOwner.position ? ` · ${matchedOwner.position}` : ''}` : L('从在册成员中选择，积分才能入账', 'Pick a roster member so points can be credited')}>
-        <MemberPicker value={form.owner} members={members} onChange={v => update('owner', v)} isEn={isEn} />
+        <MemberPicker value={form.owner} members={members} onChange={v => { update('owner', v); const picked = resolveMember(members, v); if (picked?.team) update('team', picked.team); }} isEn={isEn} />
       </Field>
       <Field label={L('截止日期', 'Due date')}>
         <input type="date" value={toDateInput(form.due)} onChange={e => update('due', fromDateInput(e.target.value))} />
@@ -1770,10 +1807,10 @@ function TaskFields({ form, update, teams = [], members = [], isEn }) {
   );
 }
 
-function TaskForm({ teams = [], members = [], onClose, onSave, isEn }) {
+function TaskForm({ teams = [], members = [], defaultTeam = '', defaultOwner = '', onClose, onSave, isEn }) {
   const L = (zh, en) => (isEn ? en : zh);
   const [form, setForm] = useState({
-    title: '', project: '2026 年度大会', team: teams[0]?.name || '', owner: '',
+    title: '', project: '2026 年度大会', team: defaultTeam || teams[0]?.name || '', owner: defaultOwner || '',
     due: '2026-11-20', status: '未开始', priority: '普通', type: '活动策划',
     points: '3', description: '',
   });
@@ -1782,7 +1819,8 @@ function TaskForm({ teams = [], members = [], onClose, onSave, isEn }) {
   const submit = () => {
     if (!form.title.trim()) { setError(L('请填写任务名称', 'Please enter a task title')); return; }
     if (!form.team) { setError(L('请选择所属团队', 'Please choose a team')); return; }
-    onSave({ ...form, title: form.title.trim(), due: fromDateInput(toDateInput(form.due)), points: Number(form.points) || 0 });
+    const picked = resolveMember(members, form.owner);
+    onSave({ ...form, owner: picked?.name || form.owner, team: form.team || picked?.team || '', title: form.title.trim(), due: fromDateInput(toDateInput(form.due)), points: Number(form.points) || 0 });
   };
   return (
     <Modal
@@ -1821,7 +1859,8 @@ function TaskDetail({ task, teams = [], members = [], transactions = [], onClose
 
   const submit = () => {
     if (!form.title.trim()) { setError(L('请填写任务名称', 'Please enter a task title')); return; }
-    onSave({ ...form, title: form.title.trim(), points: Number(form.points) || 0 }, { credit: form.status === '已完成' });
+    const picked = resolveMember(members, form.owner);
+    onSave({ ...form, owner: picked?.name || form.owner, title: form.title.trim(), points: Number(form.points) || 0 }, { credit: form.status === '已完成' });
     onClose();
   };
   const creditNow = () => {
@@ -1844,7 +1883,7 @@ function TaskDetail({ task, teams = [], members = [], transactions = [], onClose
       <div className="task-detail-summary">
         <StatusBadge>{form.status}</StatusBadge>
         <StatusBadge tone={form.priority === '重要' ? 'red' : 'gray'} dot={false}>{displayValue(form.priority, isEn ? 'en' : 'zh')}</StatusBadge>
-        <span><Avatar name={form.owner || '?'} src={members.find(m => m.name === form.owner)?.avatar} size="xs" />{form.owner || L('未指定负责人', 'No owner')}</span>
+        <span><Avatar name={form.owner || '?'} src={resolveMember(members, form.owner)?.avatar} size="xs" />{resolveMember(members, form.owner)?.name || form.owner || L('未指定负责人', 'No owner')}</span>
         <span><CalendarDays size={14} />{form.due || '—'}</span>
         <span><Coins size={14} />{Number(form.points) || 0} {L('分', 'pts')}</span>
       </div>
