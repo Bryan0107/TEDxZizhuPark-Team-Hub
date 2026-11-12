@@ -326,6 +326,28 @@ export async function sendTextToChat(chatId, text) {
   return { messageId: res.data?.message_id || '' };
 }
 
+/** 单聊：给指定成员（open_id）发卡片，用于组长催报等定向通知。 */
+export async function sendCardToUser(openId, card) {
+  if (!openId) throw new FeishuError('缺少 open_id，无法发送单聊消息', { code: 'NO_OPEN_ID' });
+  const res = await api('/im/v1/messages', {
+    method: 'POST',
+    query: { receive_id_type: 'open_id' },
+    body: { receive_id: openId, msg_type: 'interactive', content: JSON.stringify(card) },
+  });
+  return { messageId: res.data?.message_id || '' };
+}
+
+/** 单聊纯文本（卡片失败时降级）。 */
+export async function sendTextToUser(openId, text) {
+  if (!openId) throw new FeishuError('缺少 open_id，无法发送单聊消息', { code: 'NO_OPEN_ID' });
+  const res = await api('/im/v1/messages', {
+    method: 'POST',
+    query: { receive_id_type: 'open_id' },
+    body: { receive_id: openId, msg_type: 'text', content: JSON.stringify({ text }) },
+  });
+  return { messageId: res.data?.message_id || '' };
+}
+
 export async function listBotChats() {
   const res = await api('/im/v1/chats', { query: { page_size: 50 } });
   return res.data?.items || [];

@@ -20,7 +20,7 @@ import HallOfHonor, { HallAdmin } from './hall';
 import './hall.css';
 import { getCurrentUser, signIn, signOut, updateMyPrefs, roleLabel } from './auth';
 import FeishuSettings from './FeishuSettings';
-import { getFeishuSession, logoutFeishu, notifyFeishu, feishuSync, feishuSyncMember, feishuOrgSnapshot } from './feishu';
+import { getFeishuSession, logoutFeishu, notifyFeishu, feishuSync, feishuSyncMember, feishuOrgSnapshot, feishuRemindLeaders } from './feishu';
 
 const statusTone = {
   '已通过': 'green', '已入账': 'green', '已完成': 'green', '活跃': 'green', '正常': 'blue',
@@ -935,6 +935,29 @@ function Dashboard({ teams, reports, tasks, members, transactions, monthlyTrend 
 
 function ReportsPage({ reports, setReports, teams, navigate, setModal, notify, exportCsv, t, isEn, language }) {
   const [filter, setFilter] = useState('全部');
+  const [sending, setSending] = useState(false);
+  // 「提醒未提交组长」：调用服务端通过飞书单聊真实发送，结果按实际送达数量提示。
+  const remindLeaders = async () => {
+    if (sending) return;
+    setSending(true);
+    const res = await feishuRemindLeaders();
+    setSending(false);
+    if (!res?.ok) {
+      const reason = (res?.error === 'UNAUTHORIZED' || res?.error === 'FORBIDDEN')
+        ? (isEn ? 'Sign in with Feishu as an admin or lead first' : '需要以管理员/组长身份通过飞书登录后才能发送提醒')
+        : (res?.message || res?.error || (isEn ? 'unknown error' : '未知错误'));
+      notify(isEn ? `Reminder failed: ${reason}` : `提醒发送失败：${reason}`);
+      return;
+    }
+    if (!res.pending?.length) {
+      notify(isEn ? 'Every team has already submitted this month' : '本月所有团队都已提交月报，无需提醒');
+      return;
+    }
+    const skipped = (res.skipped || []).length;
+    notify(isEn
+      ? `Feishu reminders sent to ${res.sentCount} lead(s)${skipped ? `, ${skipped} skipped` : ''}`
+      : `已通过飞书提醒 ${res.sentCount} 位组长${skipped ? `，${skipped} 位未能送达` : ''}`);
+  };
   const now = new Date();
   const month = isEn ? now.toLocaleDateString('en-US', { month: 'long', year: 'numeric' }) : `${now.getFullYear()} 年 ${now.getMonth() + 1} 月`;
   const daysLeft = Math.max(0, Math.ceil((new Date(now.getFullYear(), now.getMonth() + 1, 1) - now) / 86400000));
@@ -949,7 +972,7 @@ function ReportsPage({ reports, setReports, teams, navigate, setModal, notify, e
   const notSubmittedCount = Math.max(0, teamCount - reports.length);
   return <div className="page">
     <PageTitle title={t('reportsTitle')} subtitle={t('reportsSubtitle')} actions={<><Button variant="secondary" icon={Download} onClick={() => exportCsv(isEn ? 'Monthly Team Reports' : '月度团队报告')}>{t('exportReports')}</Button><Button icon={Plus} onClick={() => setModal({ type: 'reportEditor', data: reports.find(r => r.status === '填写中') })}>{t('fillMonthlyReport')}</Button></>} />
-    <div className="report-month-banner"><div className="month-calendar"><span>{now.toLocaleDateString('en-US', { month: 'short' }).toUpperCase()}</span><strong>{String(now.getDate()).padStart(2, '0')}</strong></div><div><h3>{t('reportCycle')}</h3><p>{t('reportPeriod')}</p></div><div className="month-banner-stat"><span>{t('submitted')}</span><strong>{submittedCount}<small>{isEn ? ` / ${teamCount} teams` : ` / ${teamCount} 团队`}</small></strong></div><div className="month-banner-stat"><span>{t('daysUntilDeadline')}</span><strong>{daysLeft}<small>{isEn ? ' days' : ' 天'}</small></strong></div><Button variant="light" onClick={() => notify(isEn ? `Reminder sent to ${notSubmittedCount} team leads` : `填报提醒已发送给 ${notSubmittedCount} 位未提交组长`)}>{t('remindLeaders')}<Send size={15} /></Button></div>
+    <div className="report-month-banner"><div className="month-calendar"><span>{now.toLocaleDateString('en-US', { month: 'short' }).toUpperCase()}</span><strong>{String(now.getDate()).padStart(2, '0')}</strong></div><div><h3>{t('reportCycle')}</h3><p>{t('reportPeriod')}</p></div><div className="month-banner-stat"><span>{t('submitted')}</span><strong>{submittedCount}<small>{isEn ? ` / ${teamCount} teams` : ` / ${teamCount} 团队`}</small></strong></div><div className="month-banner-stat"><span>{t('daysUntilDeadline')}</span><strong>{daysLeft}<small>{isEn ? ' days' : ' 天'}</small></strong></div><Button variant="light" onClick={remindLeaders} disabled={sending}>{sending ? (isEn ? 'Sending…' : '发送中…') : t('remindLeaders')}<Send size={15} /></Button></div>
     <div className="metrics-grid compact"><MiniStat label={t('pendingReports')} value={String(pendingCount)} suffix={isEn ? 'reports' : '份'} icon={ClipboardCheck} tone="amber" note={isEn ? 'Review within 3 working days' : '请在 3 个工作日内完成审核'} /><MiniStat label={t('approvedReports')} value={String(approvedCount)} suffix={isEn ? 'reports' : '份'} icon={CircleCheck} tone="green" note={isEn ? 'Approved this month' : '本月已通过'} /><MiniStat label={t('teamWorkload')} value={totalHours.toLocaleString()} suffix={isEn ? 'hrs' : '小时'} icon={Clock3} tone="blue" note={isEn ? 'From submitted reports' : '来自已提交月报'} /><MiniStat label={t('suggestedPoints')} value={String(totalPoints)} suffix={isEn ? 'pts' : '分'} icon={Coins} note={isEn ? 'Credited after approval' : '审核通过后自动入账'} /></div>
     <div className="card table-card">
       <div className="table-toolbar"><div className="filter-tabs">{filters.map(([key, label]) => <button key={key} className={filter === key ? 'active' : ''} onClick={() => setFilter(key)}>{label}<span>{key === '全部' ? reports.length : key === '未提交' ? reports.filter(r => ['未开始', '填写中'].includes(r.status)).length : reports.filter(r => r.status === key).length}</span></button>)}</div><div className="toolbar-right"><button className="select-button"><CalendarDays size={15} />{month}<ChevronDown size={14} /></button><button className="icon-button bordered"><Filter size={17} /></button></div></div>
@@ -1000,7 +1023,7 @@ function TeamsPage({ teams, members = [], setModal, navigate, t, isEn }) {
   const leadName = team => team.leader || (isEn ? 'To be assigned' : '待指定');
   return <div className="page"><PageTitle title={t('teamsTitle')} subtitle={t('teamDirectorySub')} actions={<Button icon={Plus} onClick={() => navigate('members')}>{t('manageTeamsMembers')}</Button>} />
     <div className="team-summary-strip"><div><UsersRound size={20} /><span>{t('teamCount')}<strong>{teams.length}</strong></span></div><i /><div><Users size={20} /><span>{t('teamMembers')}<strong>{totals.members}</strong></span></div><i /><div><BriefcaseBusiness size={20} /><span>{t('monthlyTasks')}<strong>{totals.tasks}</strong></span></div><i /><div><Coins size={20} /><span>{t('annualPoints')}<strong>{totals.points.toLocaleString()}</strong></span></div></div>
-    <div className="teams-grid">{teams.map(team => <div className="team-card" key={team.id} onClick={() => setModal({ type: 'teamDetail', data: team })}><div className="team-card-accent" style={{ background: team.color }} /><div className="team-card-top"><span className="team-large-mark" style={{ background: `${team.color}14`, color: team.color }}>{team.short}</span><StatusBadge>{team.status}</StatusBadge></div><h2>{team.name}</h2><p>{team.description}</p>{team.feishu_department_name ? <small className="team-dept-name">{isEn ? 'Feishu dept' : '飞书部门'} · {team.feishu_department_name}</small> : null}<div className="team-leader"><Avatar name={leadName(team)} size="xs" /><span>{isEn ? `Lead · ${leadName(team)}` : `组长 · ${leadName(team)}`}</span><span>{team.members}{isEn ? ' members' : ' 位成员'}</span></div><div className="team-card-stats"><div><strong>{team.tasks}</strong><span>{t('monthlyTasks')}</span></div><div><strong>{team.done}<small>/{team.tasks}</small></strong><span>{t('completedTasks')}</span></div><div><strong>{team.points}</strong><span>{t('points')}</span></div></div><div className="team-card-footer"><AvatarStack names={team.avatars} max={4} /><button>{isEn ? 'View Team' : '查看团队'}<ArrowUpRight size={15} /></button></div></div>)}</div>
+    <div className="teams-grid">{teams.map(team => <div className="team-card" key={team.id} onClick={() => setModal({ type: 'teamDetail', data: team })}><div className="team-card-accent" style={{ background: team.color }} /><div className="team-card-top"><span className="team-large-mark" style={{ background: `${team.color}14`, color: team.color }}>{team.short}</span><StatusBadge>{team.status}</StatusBadge></div><h2>{team.name}</h2><p>{team.description}</p><div className="team-leader"><Avatar name={leadName(team)} size="xs" /><span>{isEn ? `Lead · ${leadName(team)}` : `组长 · ${leadName(team)}`}</span><span>{team.members}{isEn ? ' members' : ' 位成员'}</span></div><div className="team-card-stats"><div><strong>{team.tasks}</strong><span>{t('monthlyTasks')}</span></div><div><strong>{team.done}<small>/{team.tasks}</small></strong><span>{t('completedTasks')}</span></div><div><strong>{team.points}</strong><span>{t('points')}</span></div></div><div className="team-card-footer"><AvatarStack names={team.avatars} max={4} /><button>{isEn ? 'View Team' : '查看团队'}<ArrowUpRight size={15} /></button></div></div>)}</div>
   </div>;
 }
 
@@ -2107,7 +2130,7 @@ function TeamDetail({ team, reports = [], tasks = [], members = [], onClose, nav
   return (
     <Modal
       title={team.name}
-      subtitle={team.feishu_department_name ? `${L('飞书部门', 'Feishu dept')} · ${team.feishu_department_name}` : `Team ID · ${String(team.id).toUpperCase()}`}
+      subtitle={`${teamMembers.length} ${L('位在编成员', 'active members')} · ${team.leader || L('组长待指定', 'No lead yet')}`}
       onClose={onClose}
       size="lg"
       footer={<><Button variant="secondary" onClick={onClose}>{L('关闭', 'Close')}</Button><Button icon={FileText} onClick={() => { onClose(); navigate('reports'); }}>{L('查看团队月报', 'Team reports')}</Button></>}
@@ -2157,7 +2180,13 @@ function TeamDetail({ team, reports = [], tasks = [], members = [], onClose, nav
       <div className="team-members-preview">
         <h3>{L('团队成员', 'Team members')}</h3>
         {teamMembers.length ? (
-          <div>{teamMembers.slice(0, 12).map(m => <div key={m.id}><Avatar name={m.name} src={m.avatar} /><span>{m.name}<small>{m.role === '组长' ? L('组长', 'Lead') : (m.position || L('成员', 'Member'))}</small></span></div>)}</div>
+          <div className="team-member-grid">{teamMembers.slice(0, 16).map(m => (
+            <div className="team-member-tile" key={m.id}>
+              <Avatar name={m.name} src={m.avatar} />
+              <strong title={m.name}>{m.name}</strong>
+              <small>{m.role === '组长' ? L('组长', 'Lead') : (m.position || L('成员', 'Member'))}</small>
+            </div>
+          ))}</div>
         ) : (
           <EmptyState title={L('暂无在编成员', 'No active members')} description={L('飞书同步或手动添加成员后显示在这里。', 'Members appear here after Feishu sync or manual creation.')} />
         )}

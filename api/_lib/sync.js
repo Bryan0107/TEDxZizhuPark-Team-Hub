@@ -43,31 +43,20 @@ const mapLimit = async (items, limit, fn) => {
 };
 
 /**
- * 飞书顶层部门 → Team Hub 团队名（一一对应）。
+ * 团队名以飞书顶层部门名为准（用户要求：飞书的名字就是最终名字）。
  *
  * 当前飞书组织架构（2026-11 实测）：
- *   Team 管理支持团队        → 团队组
- *   Content 内容团队         → 内容组
- *   Media 媒体团队           → 媒体组       （含子部门「访谈团队 Interview Team」）
- *   Partnerships 伙伴关系团队 → 伙伴关系组
- *   储备策展团队 Reserve…     → 不是当期在编团队，单独进后备档案
+ *   Team 管理支持团队 / Content 内容团队 / Media 媒体团队（含子部门「访谈团队」）/ Partnerships 伙伴关系团队
+ *   「储备策展团队 Reserve…」不是当期在编团队，返回空串走后备档案逻辑。
  *
- * 只对「顶层部门」套用规则，子部门先上溯到顶层，避免「访谈团队」被误判为团队组。
+ * 子部门会先上溯到顶层再取名，因此「访谈团队 Interview Team」归入「Media 媒体团队」。
  */
-const TEAM_DEPT_RULES = [
-  [/储备|后备|reserve/i, ''],
-  [/内容|content/i, '内容组'],
-  [/媒体|media/i, '媒体组'],
-  [/伙伴|partnership|合作/i, '伙伴关系组'],
-  [/管理支持|管理|support|team/i, '团队组'],
-];
-
 export const isReserveDept = name => /储备|后备|reserve/i.test(name || '');
 
 export const mapDeptToTeam = name => {
-  if (!name) return '';
-  for (const [re, team] of TEAM_DEPT_RULES) if (re.test(name)) return team;
-  return '';
+  const value = String(name || '').trim();
+  if (!value || isReserveDept(value)) return '';
+  return value;
 };
 
 const safeJson = value => {

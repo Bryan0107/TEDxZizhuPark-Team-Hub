@@ -6,7 +6,7 @@
  * 必须登录；发送失败不影响业务（接口总是返回 200 + status），前端只做提示。
  */
 import { requireSession } from './_lib/session.js';
-import { notifyEvent, EVENT_TYPES } from './_lib/notify.js';
+import { notifyEvent, EVENT_TYPES, sendReportReminders } from './_lib/notify.js';
 
 export const config = { maxDuration: 30 };
 
@@ -15,6 +15,19 @@ export default async function handler(req, res) {
 
   const session = requireSession(req, res);
   if (!session) return;
+
+  // 月报催报：服务端计算「当月未提交的团队」，用飞书单聊提醒对应组长。
+  if (req.body?.action === 'report-reminder') {
+    if (!['admin', 'leader'].includes(session.role)) {
+      return res.status(403).json({ ok: false, error: 'FORBIDDEN', message: '仅管理员或组长可发送催报提醒' });
+    }
+    try {
+      const result = await sendReportReminders({ actor: session.name || session.sub, force: req.body?.force === true });
+      return res.status(200).json(result);
+    } catch (err) {
+      return res.status(502).json({ ok: false, error: err.message, code: err.code });
+    }
+  }
 
   const { eventType, payload = {}, force = false } = req.body || {};
   if (!eventType || !EVENT_TYPES[eventType]) {

@@ -477,7 +477,14 @@
 .member-info-grid dt{flex:0 0 92px;font-size:12.5px;color:#8d8d87}
 .member-info-grid dd{margin:0;font-size:13.5px;color:#2b2b29;word-break:break-all}
 @media(max-width:720px){.member-info-grid{grid-template-columns:1fr}}
-.team-dept-name{display:block;font-size:11.5px;color:#9a9a94;margin-top:-2px}
+/* 团队名以飞书部门名为准，可能较长：两行内展示并保持卡片等高 */
+.team-card h2{font-size:15px;line-height:1.45;min-height:44px;display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden;word-break:break-word}
+/* 团队成员：自适应网格，名字与身份分行 */
+.team-members-preview .team-member-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(124px,1fr));gap:18px 10px}
+.team-members-preview .team-member-tile{display:flex;flex-direction:column;align-items:center;gap:6px;min-width:0;text-align:center}
+.team-members-preview .team-member-tile strong{font-size:12.5px;font-weight:600;color:#2b2b29;max-width:100%;min-height:2.7em;line-height:1.35;display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden;word-break:break-word}
+.team-members-preview .team-member-tile small{font-size:11.5px;color:#8d8d87;max-width:100%;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+@media(max-width:640px){.team-members-preview .team-member-grid{grid-template-columns:repeat(auto-fill,minmax(84px,1fr))}}
 .feishu-sync-panel{display:flex;flex-direction:column;gap:14px;padding:4px 0 0}
 .fx-sync-block,.fx-mapping-block{border:1px solid #ececea;border-radius:10px;padding:14px 16px;background:#fff}
 .fx-sync-head{display:flex;gap:10px;align-items:flex-start}

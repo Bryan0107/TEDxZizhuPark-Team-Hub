@@ -56,6 +56,11 @@ export const feishuLogs = (type = 'sync', limit = 20) => req(`/api/feishu/logs?t
 export const notifyFeishu = (eventType, payload = {}) =>
   req('/api/notify', { method: 'POST', body: JSON.stringify({ eventType, payload }) }).catch(() => ({ ok: false, status: 'failed' }));
 
+/** 月报催报：服务端找出当月未提交的团队，用飞书单聊提醒组长。 */
+export const feishuRemindLeaders = () =>
+  req('/api/notify', { method: 'POST', body: JSON.stringify({ action: 'report-reminder' }) })
+    .catch(err => ({ ok: false, error: err.message }));
+
 /** 事件类型与中文标签，供设置页渲染开关。 */
 export const FEISHU_EVENTS = [
   ['member.created', '成员加入通知', '有新成员通过通讯录同步建档时发送'],
