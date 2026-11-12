@@ -572,3 +572,282 @@ input[type=number]{-moz-appearance:textfield;appearance:textfield}
 /* 最近动态：头像始终保持圆形居中，不受列表文字样式影响 */
 .activity-item .avatar{display:inline-grid;place-items:center;font-size:13px;color:#55514e;margin-top:0;flex:none}
 .activity-item .activity-type{margin-top:0}
+
+/* ============================================================
+   Unslop v2 · 纸面工作台
+   方法论参考 unslop by Damir Sokolovsky (@heydamir), CC BY 4.0
+   —— 仅采用其审计与九轮修订的方法，未复制其资源
+   ============================================================ */
+
+/* ---- 1. 间距与色彩令牌（暖纸中性 + 单一强调色） ---- */
+:root{
+  --red:#d4261a;            /* 舞台红：只用于主操作、当前状态、一处关键数字 */
+  --red-dark:#b31d12;
+  --red-ink:#a91b11;
+  --ink:#1e1a15;
+  --ink-2:#5b5348;
+  --muted:#7b7266;
+  --line:rgba(30,26,21,.105);
+  --paper:#fffdf8;          /* 面：卡片 */
+  --canvas:#f4efe6;         /* 底：纸 */
+  --raised:#efe7da;
+  --ok:#3f7a5c;
+  --warn:#8a6a1f;
+  --r-card:12px;
+  --r-ctrl:8px;
+  --r-sm:6px;
+  --ease:cubic-bezier(.22,1,.36,1);
+}
+html{background:var(--canvas);color:var(--ink);font-family:'DM Sans','PingFang SC','Noto Sans SC',-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;-webkit-font-smoothing:antialiased}
+body{background:var(--canvas)}
+::selection{background:rgba(212,38,26,.16);color:var(--red-ink)}
+::-webkit-scrollbar-thumb{background:rgba(30,26,21,.16);border-radius:2px}
+button:focus-visible,input:focus-visible,select:focus-visible,textarea:focus-visible{outline:2px solid var(--red);outline-offset:2px}
+
+/* ---- 2. 侧栏：密排、单列、当前项是面阶差而不是高亮胶囊 ---- */
+.sidebar{width:252px;background:#faf5ec;border-right:1px solid var(--line);padding:0 12px}
+.main-shell{margin-left:252px}
+.brand{min-height:64px;padding:14px 4px 8px}
+.brand-lockup{max-width:152px}
+.year-switch{margin:0 0 14px;padding:6px 10px;border-radius:var(--r-ctrl);border:1px solid var(--line);background:transparent;font-size:11.5px;font-weight:400;color:var(--muted);letter-spacing:.02em}
+.year-switch svg{width:14px;height:14px}
+.side-nav{padding:0 0 8px}
+.nav-group{margin:0}
+.nav-label{padding:0 10px;margin:18px 0 4px;font-size:11px;line-height:20px;font-weight:500;color:var(--muted);letter-spacing:.04em}
+.nav-item{height:34px;padding:0 10px;gap:10px;margin:2px 0;border-radius:var(--r-sm);font-size:13px;font-weight:400;color:var(--ink-2);transition:background-color .16s var(--ease),color .16s var(--ease)}
+.nav-item svg{width:16px;height:16px;color:var(--muted)}
+.nav-item:hover{background:rgba(30,26,21,.045);color:var(--ink)}
+.nav-item.active{background:var(--raised);color:var(--ink);font-weight:500;box-shadow:inset 0 0 0 1px rgba(30,26,21,.07)}
+.nav-item.active svg{color:var(--ink)}
+.nav-item.active:before{left:-12px;top:13px;bottom:13px;width:3px;border-radius:0 2px 2px 0}
+.nav-item em{font-size:11px;background:transparent;color:var(--muted);padding:0;border-radius:0;font-variant-numeric:tabular-nums}
+.nav-item.active em{background:transparent;color:var(--red-ink)}
+.sidebar-bottom{padding-top:6px}
+.side-help{margin:6px 2px 10px;padding:10px;background:transparent;border:1px solid var(--line);border-radius:var(--r-ctrl);gap:8px}
+.side-help>span{width:24px;height:24px;border-radius:var(--r-sm);background:transparent;border:1px solid var(--line)}
+.side-help strong{font-size:12px;font-weight:500;color:var(--ink)}
+.side-help p{font-size:11px;color:var(--muted)}
+.profile{padding:6px;border-radius:var(--r-ctrl)}
+.profile:hover{background:rgba(30,26,21,.045)}
+.profile strong{font-size:12.5px;font-weight:500}
+.profile span{font-size:11px;color:var(--muted)}
+.profile>svg{color:var(--muted)}
+
+/* ---- 3. 顶栏：安静的纸面，不是工具栏 ---- */
+.topbar{height:60px;background:rgba(244,239,230,.92);backdrop-filter:blur(8px);border-bottom:1px solid var(--line);padding:0 28px}
+.topbar-left{font-size:12px;color:var(--muted);gap:8px}
+.topbar-left strong{font-size:12.5px;font-weight:500;color:var(--ink-2)}
+.topbar-left>svg{color:rgba(30,26,21,.28)}
+.global-search{width:240px;height:32px;border:1px solid var(--line);background:rgba(255,253,248,.7);border-radius:var(--r-ctrl);gap:8px;padding:0 9px}
+.global-search>svg{color:var(--muted);width:15px;height:15px}
+.global-search kbd{font-family:ui-monospace,SFMono-Regular,Menlo,monospace;font-size:10px;color:var(--muted);background:transparent;border:1px solid var(--line);border-radius:4px;padding:0 4px;line-height:16px}
+.icon-button{width:32px;height:32px;border-radius:var(--r-ctrl);color:var(--ink-2)}
+.icon-button:hover{background:rgba(30,26,21,.05);color:var(--ink)}
+.main-content{max-width:1560px;padding:26px 28px 40px}
+.app-footer{padding:14px 28px 20px;font-size:11px;color:var(--muted);letter-spacing:0}
+
+/* ---- 4. 页头：标题说明上下文，不是问候 ---- */
+.page-title-row{margin-bottom:22px;gap:16px}
+.page-title-row h1{font-size:26px;line-height:1.2;letter-spacing:-.01em;font-weight:500;color:var(--ink)}
+.page-title-row p{margin-top:6px;font-size:12.5px;color:var(--muted)}
+.static-year{height:32px;border-radius:var(--r-ctrl);font-size:12px;background:transparent;border:1px solid var(--line);color:var(--muted)}
+.page-actions{gap:8px}
+
+/* ---- 5. 按钮：圆角按尺寸，主操作只有一个颜色，不做位移 ---- */
+.button{height:34px;border-radius:var(--r-ctrl);font-size:12.5px;font-weight:500;padding:0 14px;gap:6px;transition:background-color .16s var(--ease),border-color .16s var(--ease),color .16s var(--ease)}
+.button svg{width:15px;height:15px}
+.button-primary{background:var(--red);border-color:var(--red);box-shadow:none}
+.button-primary:hover{background:var(--red-dark);border-color:var(--red-dark);transform:none}
+.button-secondary{background:var(--paper);border-color:var(--line);color:var(--ink-2)}
+.button-secondary:hover{background:#fff;border-color:rgba(30,26,21,.22);transform:none}
+.button-light{background:var(--paper);color:var(--red-ink);border-color:var(--line)}
+.button-danger-ghost{background:transparent;border-color:var(--line);color:var(--red-ink)}
+.select-button{height:32px;border-radius:var(--r-ctrl);border-color:var(--line);background:var(--paper);font-size:12px;color:var(--ink-2)}
+.text-button{font-size:12px;color:var(--muted);gap:3px}
+.text-button:hover{color:var(--red-ink)}
+.full-secondary-button{border-radius:var(--r-ctrl);border:1px solid var(--line);background:transparent;font-size:12px;color:var(--ink-2);padding:9px 12px}
+.full-secondary-button:hover{background:rgba(30,26,21,.04);border-color:rgba(30,26,21,.2);color:var(--ink)}
+
+/* ---- 6. 卡片与表格 ---- */
+.card{background:var(--paper);border:1px solid var(--line);border-radius:var(--r-card);box-shadow:0 1px 2px rgba(30,26,21,.04)}
+.card-header{padding:17px 20px 12px}
+.card-header h2{font-size:13.5px;font-weight:500;letter-spacing:0;color:var(--ink)}
+.card-header p{font-size:11.5px;color:var(--muted);margin-top:4px}
+.card-tabs{gap:16px;padding:0 20px;border-bottom:1px solid var(--line)}
+.card-tabs button{font-size:12px;color:var(--muted);padding-bottom:9px}
+.card-tabs button span{font-size:11px;color:var(--muted);font-variant-numeric:tabular-nums}
+.card-tabs button.active{color:var(--ink);font-weight:500}
+.card-tabs button.active:after{height:2px;background:var(--red);border-radius:1px}
+.data-table th{font-size:11px;font-weight:500;color:var(--muted);letter-spacing:.02em;padding:9px 14px;border-bottom:1px solid var(--line);background:transparent}
+.data-table td{font-size:13px;color:var(--ink-2);padding:11px 14px;border-bottom:1px solid rgba(30,26,21,.06)}
+.data-table td strong{color:var(--ink);font-weight:500}
+.data-table tbody tr:hover{background:rgba(30,26,21,.03)}
+.data-table td small,.table-sub{font-size:11.5px;color:var(--muted)}
+.team-mark{width:28px;height:28px;border-radius:var(--r-sm);font-size:11px;font-weight:500;background:var(--raised)!important;color:var(--ink-2)!important;box-shadow:inset 0 0 0 1px rgba(30,26,21,.06)}
+.team-name-cell strong{font-size:13px;font-weight:500}
+.progress-track{height:4px;border-radius:2px;background:rgba(30,26,21,.09)}
+.progress-track i{border-radius:2px;background:var(--ink-2)!important}
+.completion-cell span{font-size:11.5px;color:var(--muted);font-variant-numeric:tabular-nums}
+
+/* ---- 7. 概览数字：只有标签、数字、一句参照 ---- */
+.metrics-grid{gap:12px;margin-bottom:16px}
+.metric-card{padding:16px 18px 17px;border-radius:var(--r-card);border-color:var(--line);background:var(--paper)}
+.metric-top{font-size:11.5px;color:var(--muted);gap:8px}
+.metric-icon{display:none!important}
+.metric-value{font-size:30px;font-weight:500;letter-spacing:-.01em;margin-top:10px;font-variant-numeric:tabular-nums;color:var(--ink)}
+.metric-value small{font-size:12px;color:var(--muted);margin-left:5px;letter-spacing:0}
+.metric-note{font-size:11.5px;color:var(--muted);margin-top:6px}
+.trend-up,.trend-down{font-variant-numeric:tabular-nums}
+
+/* ---- 8. 月报横幅：一行说明 + 一条进度，不做渐变色块 ---- */
+.deadline-banner{background:var(--paper);border:1px solid var(--line);border-radius:var(--r-card);padding:14px 18px;gap:18px;margin-bottom:16px}
+.deadline-icon{display:none}
+.deadline-copy{min-width:220px}
+.deadline-copy strong{font-size:13.5px;font-weight:500;color:var(--ink)}
+.deadline-copy p{font-size:12px;color:var(--muted);margin-top:4px}
+.deadline-progress{width:190px;margin:0}
+.deadline-progress>div:first-child{font-size:11px;color:var(--muted);margin-bottom:6px}
+.deadline-progress strong{font-size:11px;color:var(--ink);font-variant-numeric:tabular-nums}
+.deadline-progress .progress-track i{background:var(--red)!important}
+
+/* ---- 9. 状态与计数：安静的文字，方块是这套界面的签名记号 ---- */
+.status-badge{background:transparent!important;border-radius:0;padding:0;font-size:11.5px;font-weight:400;gap:6px;color:var(--ink-2)}
+.status-badge i{width:5px;height:5px;border-radius:1px;background:currentColor}
+.status-badge.green{color:var(--ok)}
+.status-badge.amber{color:var(--warn)}
+.status-badge.red{color:var(--red-ink)}
+.status-badge.blue{color:var(--ink-2)}
+.status-badge.gray{color:var(--muted)}
+.status-badge.purple{color:var(--ink-2)}
+.dot{width:6px;height:6px;border-radius:1px}
+.dot.green{background:var(--ok)}
+.dot.amber{background:var(--warn)}
+.dot.red{background:var(--red)}
+.dot.gray{background:rgba(30,26,21,.22)}
+.cue{display:inline-block;width:6px;height:6px;border-radius:1px;background:var(--red);margin-right:7px;vertical-align:1px}
+.cue-meta{display:inline-flex;align-items:center;font-size:11.5px;color:var(--red-ink);font-variant-numeric:tabular-nums;white-space:nowrap}
+
+/* ---- 10. 月报提交：一条堆叠进度条 + 一张清单，代替圆环 ---- */
+.report-figure{display:flex;align-items:baseline;gap:8px;padding:0 20px 12px}
+.report-figure strong{font-size:34px;font-weight:500;letter-spacing:-.01em;font-variant-numeric:tabular-nums;color:var(--ink)}
+.report-figure strong span{font-size:14px;font-weight:400;color:var(--muted)}
+.report-figure small{font-size:11.5px;color:var(--muted)}
+.stacked-bar{display:flex;height:8px;margin:0 20px 14px;border-radius:2px;overflow:hidden;background:rgba(30,26,21,.08)}
+.stacked-bar i{display:block;height:100%}
+.stacked-bar .is-approved{background:var(--ink-2)}
+.stacked-bar .is-review{background:var(--red)}
+.stacked-bar .is-revision{background:#c3a97c}
+.report-rows{list-style:none;margin:0;padding:0 20px}
+.report-rows li{display:flex;align-items:center;gap:8px;padding:8px 0;font-size:12.5px;color:var(--ink-2);border-bottom:1px solid rgba(30,26,21,.06)}
+.report-rows li:last-child{border-bottom:0}
+.report-rows li b{margin-left:auto;font-weight:500;color:var(--ink);font-variant-numeric:tabular-nums}
+.report-progress-card>.full-secondary-button{width:calc(100% - 40px);margin:10px 20px 16px}
+
+/* ---- 11. 榜单与动态 ---- */
+.leader-item{padding:9px 0;border-bottom:1px solid rgba(30,26,21,.07);gap:10px}
+.leader-item strong{font-size:12.5px;font-weight:500}
+.leader-item small{font-size:11px;color:var(--muted);margin-top:2px}
+.leader-points{font-size:13px;font-weight:500;font-variant-numeric:tabular-nums}
+.rank{font-variant-numeric:tabular-nums}
+.my-rank{border-top:1px solid var(--line);font-size:12px;color:var(--muted)}
+.my-rank strong{font-variant-numeric:tabular-nums;color:var(--ink)}
+.activity-item p{font-size:12.5px}
+.activity-item>div>span{font-size:11.5px;color:var(--muted);margin-top:3px}
+.activity-type{background:transparent;border-radius:0;width:auto;height:auto;color:var(--muted)!important}
+
+/* ---- 12. 登录：把光斑、渐变文字和字重全部收掉 ---- */
+.login-brand{background:#171310;padding:40px 52px}
+.login-brand:before{display:none}
+.login-brand-x{display:none}
+.login-brand-copy h1,.login-gradient-title{font-size:52px;line-height:1.06;letter-spacing:-.03em;font-weight:500;color:#fff;background:none;-webkit-text-fill-color:currentColor;animation:none}
+.login-gradient-title span{background:none;-webkit-text-fill-color:var(--red);color:var(--red)}
+.login-brand-copy p{font-size:16px;line-height:1.6;color:#e9e3d8;margin-bottom:8px}
+.login-brand-copy small{font-size:12px;color:#9c9488;letter-spacing:.02em}
+.login-brand-footer{font-size:11.5px;color:#8b8377;letter-spacing:.02em}
+.login-panel{padding:28px 52px 24px;background:var(--canvas)}
+.login-form{max-width:396px}
+.login-form h2{font-size:26px;font-weight:500;letter-spacing:-.01em;margin-bottom:8px;color:var(--ink)}
+.login-form-sub{font-size:13px;line-height:1.65;color:var(--muted);margin-bottom:26px}
+.login-field{gap:7px;margin-bottom:16px}
+.login-field>span{font-size:12px;font-weight:500;color:var(--ink-2)}
+.login-field input{height:44px;border-radius:var(--r-ctrl);border:1px solid var(--line);background:var(--paper);font-size:14px;transition:border-color .16s var(--ease),background-color .16s var(--ease)}
+.login-field input:focus{border-color:var(--ink-2);background:#fff;box-shadow:none}
+.login-submit{height:44px;border-radius:var(--r-ctrl);font-size:14px;font-weight:500;transition:background-color .16s var(--ease)}
+.login-submit:hover:not(:disabled){background:var(--red-dark);transform:none}
+.login-feishu{height:44px;border-radius:var(--r-ctrl);border-color:var(--line);font-size:13px;font-weight:500;box-shadow:none}
+.login-feishu:hover{border-color:rgba(30,26,21,.22);background:var(--paper);box-shadow:none}
+.login-divider{font-size:11px;letter-spacing:0;text-transform:none;color:var(--muted)}
+.login-secure,.login-help,.login-panel-footer{font-size:11.5px;color:var(--muted);line-height:1.6}
+
+/* ---- 13. 其他页面共用的中性化 ---- */
+.global-search input,.editor-task-form>input,.editor-task-form>select{color:var(--ink)}
+.admin-note,.rules-note,.search-empty,.empty-state p{color:var(--muted)}
+.avatar{color:var(--ink-2)}
+.avatar-sm{width:28px;height:28px;font-size:12px}
+.avatar-md{width:32px;height:32px;font-size:13px}
+
+/* 空图：一条基线 + 一句说明，不铺满空坐标轴 */
+.dashboard-chart-grid{align-items:start}
+.chart-empty{margin:6px 20px 20px;padding:14px 0 0;border-top:1px solid var(--line);display:flex;flex-direction:column;gap:3px}
+.chart-empty span{font-size:12px;color:var(--ink-2)}
+.chart-empty small{font-size:11.5px;color:var(--muted)}
+
+/* ---- 任务页：统计项只留数字与标签，状态改成安静的选择器 ---- */
+.task-stats-row{gap:12px;margin-bottom:16px}
+.task-stat{padding:15px 18px;border-radius:var(--r-card);border:1px solid var(--line);background:var(--paper);gap:0;box-shadow:0 1px 2px rgba(30,26,21,.04);transition:border-color .16s var(--ease),background-color .16s var(--ease)}
+.task-stat:hover{border-color:rgba(30,26,21,.22);background:#fff}
+.task-stat.selected{border-color:rgba(30,26,21,.24);background:var(--raised);box-shadow:none}
+.task-stat strong{font-size:26px;font-weight:500;letter-spacing:-.01em;font-variant-numeric:tabular-nums;color:var(--ink)}
+.task-stat span:not(.metric-icon){font-size:11.5px;color:var(--muted);margin-top:4px}
+.status-select{background:transparent!important;border:1px solid transparent;border-radius:var(--r-sm);padding:4px 22px 4px 8px;font-size:12px;color:var(--ink-2);
+  appearance:none;-webkit-appearance:none;
+  background-image:url("data:image/svg+xml;charset=utf-8,%3Csvg xmlns='http://www.w3.org/2000/svg' width='10' height='10' viewBox='0 0 24 24' fill='none' stroke='%237b7266' stroke-width='2.4' stroke-linecap='round'%3E%3Cpolyline points='6 9 12 15 18 9'/%3E%3C/svg%3E")!important;
+  background-repeat:no-repeat!important;background-position:right 6px center!important}
+.status-select:hover{border-color:var(--line);background-color:var(--paper)!important}
+.status-select.green{color:var(--ok)}
+.status-select.blue{color:var(--ink-2)}
+.status-select.amber{color:var(--warn)}
+.status-select.red{color:var(--red-ink)}
+.status-select.gray{color:var(--muted)}
+.task-progress .progress-track{width:88px;flex:none}
+.task-progress span{font-size:11.5px;color:var(--muted);font-variant-numeric:tabular-nums}
+
+/* ---- 成员页：三个数字块与角色标签 ---- */
+.member-insights{gap:12px;margin-bottom:16px}
+.member-insights>div{display:block;background:var(--paper);border:1px solid var(--line);border-radius:var(--r-card);padding:15px 18px;box-shadow:0 1px 2px rgba(30,26,21,.04)}
+.member-insights strong{font-size:26px;font-weight:500;letter-spacing:-.01em;font-variant-numeric:tabular-nums;color:var(--ink)}
+.member-insights p{font-size:11.5px;color:var(--muted);margin-top:4px}
+.member-insights small{margin:8px 0 0;font-size:11.5px;color:var(--muted);display:block}
+.role-tag{background:transparent;padding:0;border-radius:0;font-size:12px;color:var(--muted)}
+.role-tag.leader{background:transparent;color:var(--red-ink);font-weight:500}
+.points-number{font-variant-numeric:tabular-nums}
+.points-month{font-size:11px;color:var(--muted)}
+
+/* ---- 月报页横幅：从整块红底改为纸面 + 一处红色日期 ---- */
+.report-month-banner{background:var(--paper);color:var(--ink);border:1px solid var(--line);border-radius:var(--r-card);padding:16px 18px;gap:16px;box-shadow:0 1px 2px rgba(30,26,21,.04)}
+.report-month-banner:after{display:none}
+.report-month-banner h3{font-size:14px;font-weight:500;color:var(--ink)}
+.report-month-banner p{font-size:12px;color:var(--muted);margin-top:4px}
+.month-calendar{width:44px;height:48px;border-radius:var(--r-sm);background:var(--raised);color:var(--red-ink);border:1px solid var(--line)}
+.month-calendar span{background:transparent;font-size:9px;font-weight:500;letter-spacing:.08em;padding:4px 0 1px}
+.month-calendar strong{font-size:22px;line-height:26px;font-weight:500;font-variant-numeric:tabular-nums}
+.month-banner-stat{border-left:1px solid var(--line);padding:0 16px}
+.month-banner-stat>span{font-size:11px;color:var(--muted);margin-bottom:3px}
+.month-banner-stat strong{font-size:20px;font-weight:500;font-variant-numeric:tabular-nums;color:var(--ink)}
+.month-banner-stat small{font-size:11px;color:var(--muted)}
+.report-month-banner .button-secondary{background:transparent}
+
+/* ---- 团队页：四条彩色顶栏改为一根发丝线，字母牌中性 ---- */
+.team-card{background:var(--paper);border-color:var(--line);border-radius:var(--r-card);padding:16px 18px 14px;transition:border-color .16s var(--ease),box-shadow .16s var(--ease)}
+.team-card:hover{transform:none;border-color:rgba(30,26,21,.22);box-shadow:0 2px 10px rgba(30,26,21,.05)}
+.team-card-accent{background:var(--line)!important;height:2px}
+.team-card h2{font-size:14px;font-weight:500;color:var(--ink);min-height:40px}
+.team-card>p{font-size:12px;line-height:1.65;color:var(--muted);height:auto;min-height:38px}
+.team-large-mark{background:var(--raised)!important;color:var(--ink-2)!important;border-radius:var(--r-sm);width:34px;height:34px;font-size:12px;font-weight:500;box-shadow:inset 0 0 0 1px rgba(30,26,21,.06)}
+.team-card-stats{border-top:1px solid var(--line);border-bottom:1px solid var(--line);padding:12px 0;margin:12px 0 10px}
+.team-card-stats>div{border-right:1px solid var(--line)}
+.team-card-stats strong{font-size:16px;font-weight:500;font-variant-numeric:tabular-nums;color:var(--ink)}
+.team-card-stats span{font-size:11px;color:var(--muted);margin-top:2px}
+.team-card-stats small{font-size:11px;color:var(--muted)}
+.team-card-footer button{font-size:12px;color:var(--muted)}
+.team-card-footer button:hover{color:var(--ink)}
