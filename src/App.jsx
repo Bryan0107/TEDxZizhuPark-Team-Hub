@@ -622,6 +622,43 @@ function MainApp({ session, onLogout, onSessionUpdate, language, setLanguage }) 
       console.warn('[Team Hub] 重新读取云端数据失败', err);
     }
   };
+
+  // 成员积分以积分流水为准（任务完成自动入账后立即反映在排行榜与档案里）。
+  const activeMembersWithPoints = useMemo(() => {
+    const totals = new Map();
+    transactions.forEach(tx => {
+      if (!tx.member) return;
+      totals.set(tx.member, (totals.get(tx.member) || 0) + (Number(tx.points) || 0));
+    });
+    return activeMembers.map(m => ({ ...m, points: totals.get(m.name) ?? 0 }));
+  }, [activeMembers, transactions]);
+
+  /** 任务积分入账：按任务 id 生成唯一流水，重复调用不会重复记账。 */
+  const creditTaskPoints = (task, { silent = false } = {}) => {
+    const points = Number(task?.points) || 0;
+    const owner = task?.owner || '';
+    if (!owner || points <= 0 || !task?.id) return false;
+    const txId = `tx_task_${task.id}`;
+    if (transactions.some(tx => tx.id === txId)) return false;
+    const now = new Date();
+    setTransactions(prev => prev.some(tx => tx.id === txId) ? prev : [{
+      id: txId,
+      txid: txId,
+      member: owner,
+      team: task.team || '',
+      type: '任务贡献',
+      source: `任务完成：${task.title || ''}`,
+      date: `${now.getMonth() + 1}月${now.getDate()}日`,
+      status: '已入账',
+      points,
+      reason: `任务「${task.title || ''}」完成入账`,
+      report_id: String(task.id),
+      year: now.getFullYear(),
+      month: now.getMonth() + 1,
+    }, ...prev]);
+    if (!silent) notify(`已为 ${owner} 记入 ${points} 分`);
+    return true;
+  };
   const allowedPages = ROLE_PAGES[role] || ROLE_PAGES.member;
   const navGroups = getNavGroups(t).map(group => ({ ...group, items: group.items.filter(item => allowedPages.includes(item.id)) })).filter(group => group.items.length);
   if (role === 'admin' || role === 'leader') {
@@ -685,15 +722,15 @@ function MainApp({ session, onLogout, onSessionUpdate, language, setLanguage }) 
   let content;
   switch (activePage) {
     case 'reports': content = <ReportsPage reports={reports} setReports={setReports} teams={teamView} {...shared} />; break;
-    case 'tasks': content = <TasksPage tasks={tasks} setTasks={setTasks} {...shared} />; break;
+    case 'tasks': content = <TasksPage tasks={tasks} setTasks={setTasks} teams={teams} members={activeMembers} creditPoints={creditTaskPoints} {...shared} />; break;
     case 'teams': content = <TeamsPage teams={teamView} members={activeMembers} {...shared} />; break;
     case 'members': content = <MembersPage members={members} setMembers={setMembers} teams={teams} reserves={reserves} setReserves={setReserves} transactions={transactions} tasks={tasks} {...shared} />; break;
     case 'myPoints': content = <MyPointsPage transactions={transactions} tasks={tasks} teams={teams} {...shared} />; break;
-    case 'pointsManagement': content = <PointsManagement transactions={transactions} setTransactions={setTransactions} members={activeMembers} {...shared} />; break;
+    case 'pointsManagement': content = <PointsManagement transactions={transactions} setTransactions={setTransactions} members={activeMembersWithPoints} {...shared} />; break;
     case 'analytics': content = <AnalyticsPage teams={teamView} monthlyTrend={monthlyTrend} transactions={transactions} tasks={tasks} members={activeMembers} {...shared} />; break;
     case 'hallAdmin': content = <HallAdmin notify={notify} lang={language} />; break;
     case 'settings': content = <SettingsPage {...shared} session={session} role={role} orgSettings={orgSettings} onOrgSettings={setOrgSettings} onSessionUpdate={onSessionUpdate} language={language} teams={teamView} members={members} tasks={tasks} reports={reports} transactions={transactions} reserves={reserves} />; break;
-    default: content = <Dashboard teams={teamView} reports={reports} tasks={tasks} members={activeMembers} transactions={transactions} monthlyTrend={monthlyTrend} greeting={greetingText} greetingSub={greetingSubtitle(language)} {...shared} />;
+    default: content = <Dashboard teams={teamView} reports={reports} tasks={tasks} members={activeMembersWithPoints} transactions={transactions} monthlyTrend={monthlyTrend} greeting={greetingText} greetingSub={greetingSubtitle(language)} {...shared} />;
   }
 
   return <LanguageContext.Provider value={language}><div className="app-shell">
@@ -733,11 +770,48 @@ function MainApp({ session, onLogout, onSessionUpdate, language, setLanguage }) 
       <footer className="app-footer"><span>TEDxZizhuPark Team Hub · {t('footerTagline')}</span><span>Ideas change everything.</span></footer>
     </div>
 
-    {modal?.type === 'newTask' && <TaskForm onClose={closeModal} onSave={task => {
-      setTasks(prev => [{ ...task, id: Date.now(), progress: 0, collaborators: task.owner ? [task.owner.slice(0, 1)] : [] }, ...prev]);
-      closeModal(); notify('新任务已创建并通知负责人');
+    {modal?.type === 'newTask' && <TaskForm teams={teams} members={activeMembers} isEn={isEn} onClose={closeModal} onSave={task => {
+      const created = { ...task, id: Date.now(), progress: task.status === '已完成' ? 100 : 0, collaborators: task.owner ? [task.owner] : [] };
+      setTasks(prev => [created, ...prev]);
+      const credited = created.status === '已完成' ? creditTaskPoints(created, { silent: true }) : false;
+      closeModal();
+      notify(isEn
+        ? `Task created${credited ? ` · ${created.points} pts credited to ${created.owner}` : ''}`
+        : `新任务已创建${credited ? `，${created.points} 分已记入 ${created.owner}` : '并通知负责人'}`);
       notifyFeishu('event.created', { title: '新建活动/任务', summary: 'Team Hub 中创建了新的活动或任务。', fields: [['任务', task.title || '—'], ['所属团队', task.team || '—'], ['负责人', task.owner || '—'], ['截止日期', task.due || '—']] });
     }} />}
+    {modal?.type === 'taskDetail' && (() => {
+      const liveTask = tasks.find(item => item.id === modal.data.id) || modal.data;
+      return <TaskDetail
+        task={liveTask}
+        teams={teams}
+        members={activeMembers}
+        transactions={transactions}
+        isEn={isEn}
+        creditPoints={creditTaskPoints}
+        notify={notify}
+        onClose={closeModal}
+        onSave={(patch, { credit } = {}) => {
+          const next = {
+            ...liveTask,
+            ...patch,
+            progress: patch.status === '已完成' ? 100 : (patch.status === '未开始' ? 0 : (liveTask.progress || 0)),
+            collaborators: patch.owner ? [patch.owner] : liveTask.collaborators,
+          };
+          setTasks(prev => prev.map(item => item.id === liveTask.id ? next : item));
+          const credited = credit ? creditTaskPoints(next, { silent: true }) : false;
+          notify(isEn
+            ? `Task updated${credited ? ` · ${next.points} pts credited` : ''}`
+            : `任务已更新${credited ? `，${next.points} 分已入账` : ''}`);
+        }}
+        onDelete={task => {
+          removeRow('tasks', task.id);
+          setTasks(prev => prev.filter(item => item.id !== task.id));
+          closeModal();
+          notify(isEn ? 'Task deleted' : '任务已删除');
+        }}
+      />;
+    })()}
     {modal?.type === 'reportReview' && <ReportReview report={modal.data} onClose={closeModal} onApprove={() => approveReport(modal.data)} onReturn={() => returnReport(modal.data)} />}
     {modal?.type === 'reportEditor' && <ReportEditor report={modal.data} teams={teams} onClose={closeModal} onSave={(data, submit) => {
       if (modal.data?.id) setReports(prev => prev.map(r => r.id === modal.data.id ? { ...r, ...data, status: submit ? '审核中' : '填写中' } : r));
@@ -885,19 +959,33 @@ function ReportsPage({ reports, setReports, teams, navigate, setModal, notify, e
   </div>;
 }
 
-function TasksPage({ tasks, setTasks, setModal, notify, t, isEn, language }) {
+function TasksPage({ tasks, setTasks, teams = [], members = [], creditPoints, setModal, notify, t, isEn, language }) {
   const [view, setView] = useState('list');
   const [filter, setFilter] = useState('全部任务');
   const [query, setQuery] = useState('');
-  const filtered = tasks.filter(task => (filter === '全部任务' || task.status === filter) && `${task.title}${task.owner}${task.team}`.includes(query));
-  const updateStatus = (task, status) => { setTasks(prev => prev.map(item => item.id === task.id ? { ...item, status, progress: status === '已完成' ? 100 : item.progress } : item)); notify(isEn ? `“${task.title}” moved to ${displayValue(status, 'en')}` : `「${task.title}」已更新为${status}`); };
+  const [teamFilter, setTeamFilter] = useState('');
+  const [typeFilter, setTypeFilter] = useState('');
+  const typeOptions = [...new Set([...TASK_TYPES, ...tasks.map(task => task.type).filter(Boolean)])];
+  const filtered = tasks.filter(task => (filter === '全部任务' || task.status === filter)
+    && (!teamFilter || task.team === teamFilter)
+    && (!typeFilter || task.type === typeFilter)
+    && `${task.title}${task.owner}${task.team}`.includes(query));
+  const updateStatus = (task, status) => {
+    setTasks(prev => prev.map(item => item.id === task.id ? { ...item, status, progress: status === '已完成' ? 100 : item.progress } : item));
+    // 状态改为「已完成」时，自动把任务积分记到负责人账户（同一任务只入账一次）。
+    let credited = false;
+    if (status === '已完成') credited = Boolean(creditPoints?.({ ...task, status }));
+    notify(isEn
+      ? `“${task.title}” moved to ${displayValue(status, 'en')}${credited ? ' · points credited' : ''}`
+      : `「${task.title}」已更新为${status}${credited ? '，任务积分已入账' : ''}`);
+  };
   const statItems = [['全部任务', t('allTasks'), tasks.length, CheckSquare, 'gray'], ['进行中', displayValue('进行中', language), tasks.filter(task => task.status === '进行中').length, Activity, 'blue'], ['待审核', displayValue('待审核', language), tasks.filter(task => task.status === '待审核').length, Clock3, 'amber'], ['已完成', displayValue('已完成', language), tasks.filter(task => task.status === '已完成').length, CircleCheck, 'green']];
   return <div className="page">
     <PageTitle title={t('tasksTitle')} subtitle={t('tasksSubtitle')} actions={<><Button variant="secondary" icon={Upload} onClick={() => notify(isEn ? 'Task import template is ready' : '任务导入模板已准备好')}>{t('importTasks')}</Button><Button icon={Plus} onClick={() => setModal({ type: 'newTask' })}>{t('newTask')}</Button></>} />
     <div className="task-stats-row">{statItems.map(([key, label, num, Icon, tone]) => <button className={`task-stat ${filter === key ? 'selected' : ''}`} key={key} onClick={() => setFilter(key)}><span className={`metric-icon ${tone}`}><Icon size={18} /></span><div><strong>{num}</strong><span>{label}</span></div><ChevronRight size={16} /></button>)}</div>
     <div className="card table-card">
-      <div className="table-toolbar"><div className="local-search"><Search size={16} /><input placeholder={t('searchTasks')} value={query} onChange={e => setQuery(e.target.value)} /></div><div className="toolbar-right"><button className="select-button">{t('allTeams')}<ChevronDown size={14} /></button><button className="select-button">{isEn ? 'All Types' : '全部类型'}<ChevronDown size={14} /></button><div className="view-switch"><button className={view === 'list' ? 'active' : ''} onClick={() => setView('list')}><List size={17} /></button><button className={view === 'board' ? 'active' : ''} onClick={() => setView('board')}><LayoutGrid size={17} /></button></div></div></div>
-      {view === 'list' ? <div className="table-wrap"><table className="data-table task-table"><thead><tr><th>{t('taskName')}</th><th>{t('assignedTeam')}</th><th>{t('collaborators')}</th><th>{t('dueDate')}</th><th>{t('priority')}</th><th>{t('progress')}</th><th>{t('status')}</th><th /></tr></thead><tbody>{filtered.map(task => <tr key={task.id}><td><div className="task-title-cell"><button className={`task-check ${task.status === '已完成' ? 'checked' : ''}`} onClick={() => updateStatus(task, task.status === '已完成' ? '进行中' : '已完成')}>{task.status === '已完成' && <Check size={13} />}</button><div><strong>{task.title}</strong><small>{task.project} · {task.type}</small></div></div></td><td>{task.team}</td><td><AvatarStack names={task.collaborators} /></td><td><span className={task.due.includes('08') && task.status !== '已完成' ? 'text-red' : ''}>{task.due}</span></td><td><StatusBadge tone={task.priority === '重要' ? 'red' : 'gray'} dot={false}>{task.priority}</StatusBadge></td><td><div className="task-progress"><div className="progress-track"><i style={{ width: `${task.progress}%` }} /></div><span>{task.progress}%</span></div></td><td><select className={`status-select ${statusTone[task.status] || 'gray'}`} value={task.status} onChange={e => updateStatus(task, e.target.value)}>{['未开始', '进行中', '待审核', '已完成', '暂停'].map(option => <option key={option} value={option}>{displayValue(option, language)}</option>)}</select></td><td><button className="icon-button"><MoreHorizontal size={17} /></button></td></tr>)}</tbody></table>{!filtered.length && <EmptyState title={isEn ? 'No tasks found' : '没有找到相关任务'} description={isEn ? 'Try another filter or keyword.' : '试试调整筛选条件或搜索关键词。'} />}</div> : <div className="kanban-board">{['未开始', '进行中', '待审核', '已完成'].map(status => <div className="kanban-column" key={status}><div className="kanban-title"><StatusBadge>{status}</StatusBadge><span>{tasks.filter(task => task.status === status).length}</span><Plus size={15} onClick={() => setModal({ type: 'newTask' })} /></div>{tasks.filter(task => task.status === status).map(task => <div className="kanban-card" key={task.id}><div className="kanban-card-top"><span>{task.type}</span><MoreHorizontal size={16} /></div><h3>{task.title}</h3><p>{task.project}</p><div className="progress-track"><i style={{ width: `${task.progress}%` }} /></div><div className="kanban-footer"><AvatarStack names={task.collaborators} /><span><CalendarDays size={13} />{task.due}</span></div></div>)}</div>)}</div>}
+      <div className="table-toolbar"><div className="local-search"><Search size={16} /><input placeholder={t('searchTasks')} value={query} onChange={e => setQuery(e.target.value)} /></div><div className="toolbar-right"><select className="select-field" value={teamFilter} onChange={e => setTeamFilter(e.target.value)}><option value="">{t('allTeams')}</option>{teams.map(team => <option key={team.id} value={team.name}>{team.name}</option>)}</select><select className="select-field" value={typeFilter} onChange={e => setTypeFilter(e.target.value)}><option value="">{isEn ? 'All Types' : '全部类型'}</option>{typeOptions.map(type => <option key={type} value={type}>{displayValue(type, language)}</option>)}</select><div className="view-switch"><button className={view === 'list' ? 'active' : ''} onClick={() => setView('list')}><List size={17} /></button><button className={view === 'board' ? 'active' : ''} onClick={() => setView('board')}><LayoutGrid size={17} /></button></div></div></div>
+      {view === 'list' ? <div className="table-wrap"><table className="data-table task-table"><thead><tr><th>{t('taskName')}</th><th>{t('assignedTeam')}</th><th>{t('collaborators')}</th><th>{t('dueDate')}</th><th>{t('priority')}</th><th>{t('progress')}</th><th>{t('status')}</th><th /></tr></thead><tbody>{filtered.map(task => <tr key={task.id}><td><div className="task-title-cell"><button className={`task-check ${task.status === '已完成' ? 'checked' : ''}`} onClick={() => updateStatus(task, task.status === '已完成' ? '进行中' : '已完成')}>{task.status === '已完成' && <Check size={13} />}</button><div><strong>{task.title}</strong><small>{task.project} · {task.type}</small></div></div></td><td>{task.team}</td><td><AvatarStack names={task.collaborators} /></td><td><span className={String(task.due || '').includes('08') && task.status !== '已完成' ? 'text-red' : ''}>{task.due || '—'}</span></td><td><StatusBadge tone={task.priority === '重要' ? 'red' : 'gray'} dot={false}>{task.priority}</StatusBadge></td><td><div className="task-progress"><div className="progress-track"><i style={{ width: `${task.progress}%` }} /></div><span>{task.progress}%</span></div></td><td><select className={`status-select ${statusTone[task.status] || 'gray'}`} value={task.status} onChange={e => updateStatus(task, e.target.value)}>{['未开始', '进行中', '待审核', '已完成', '暂停'].map(option => <option key={option} value={option}>{displayValue(option, language)}</option>)}</select></td><td><button className="icon-button" title={isEn ? 'Task detail' : '任务详情'} onClick={() => setModal({ type: 'taskDetail', data: task })}><MoreHorizontal size={17} /></button></td></tr>)}</tbody></table>{!filtered.length && <EmptyState title={isEn ? 'No tasks found' : '没有找到相关任务'} description={isEn ? 'Try another filter or keyword.' : '试试调整筛选条件或搜索关键词。'} />}</div> : <div className="kanban-board">{['未开始', '进行中', '待审核', '已完成'].map(status => <div className="kanban-column" key={status}><div className="kanban-title"><StatusBadge>{status}</StatusBadge><span>{tasks.filter(task => task.status === status).length}</span><Plus size={15} onClick={() => setModal({ type: 'newTask' })} /></div>{tasks.filter(task => task.status === status).map(task => <div className="kanban-card" key={task.id} onClick={() => setModal({ type: 'taskDetail', data: task })}><div className="kanban-card-top"><span>{task.type}</span><MoreHorizontal size={16} /></div><h3>{task.title}</h3><p>{task.project}</p><div className="progress-track"><i style={{ width: `${task.progress}%` }} /></div><div className="kanban-footer"><AvatarStack names={task.collaborators} /><span><CalendarDays size={13} />{task.due}</span></div></div>)}</div>)}</div>}
       <div className="table-footer"><span>{isEn ? `${filtered.length} tasks shown · Live data` : `显示 ${filtered.length} 项任务 · 实时数据`}</span><span>{isEn ? 'Completed tasks are included in monthly reports' : '已完成任务会自动计入对应月报'}</span></div>
     </div>
   </div>;
@@ -1388,12 +1476,215 @@ function SettingToggle({ title, description, value, onChange }) {
   return <div className="setting-toggle"><div><strong>{title}</strong><p>{description}</p></div><button className={`toggle ${value ? 'on' : ''}`} onClick={onChange}><i /></button></div>;
 }
 
-function TaskForm({ onClose, onSave }) {
-  const [form, setForm] = useState({ title: '', project: '2026 年度大会', team: '内容策划组', owner: '', due: '2026-11-20', status: '未开始', priority: '普通', type: '活动策划', description: '' });
+const TASK_PROJECTS = ['2026 年度大会', '品牌日常传播', '讲者招募计划', '年度合作计划'];
+const TASK_TYPES = ['活动策划', '内容创作', '视觉设计', '品牌传播', '现场执行', '其他'];
+const TASK_STATUSES = ['未开始', '进行中', '待审核', '已完成', '暂停'];
+
+/** 截止日期在数据库里是「11月20日」这类展示串，编辑时转成 date 输入需要的 yyyy-mm-dd。 */
+function toDateInput(value) {
+  const text = String(value || '');
+  if (/^\d{4}-\d{2}-\d{2}$/.test(text)) return text;
+  const hit = text.match(/(\d{1,2})\s*月\s*(\d{1,2})/);
+  if (hit) return `${new Date().getFullYear()}-${String(hit[1]).padStart(2, '0')}-${String(hit[2]).padStart(2, '0')}`;
+  const d = new Date();
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+}
+
+function fromDateInput(value) {
+  if (!value) return '';
+  return value.slice(5).replace('-', '月') + '日';
+}
+
+/** 负责人搜索选择器：可输入关键字，从在编成员里选，避免手打错名字导致积分记不到人。 */
+function MemberPicker({ value, members = [], onChange, placeholder, isEn }) {
+  const [open, setOpen] = useState(false);
+  const [query, setQuery] = useState('');
+  const wrapRef = useRef(null);
+  const selected = members.find(m => m.name === value) || null;
+  const keyword = open ? query : (selected?.name || value || '');
+
+  useEffect(() => {
+    if (!open) return;
+    const onDocClick = event => { if (wrapRef.current && !wrapRef.current.contains(event.target)) setOpen(false); };
+    document.addEventListener('mousedown', onDocClick);
+    return () => document.removeEventListener('mousedown', onDocClick);
+  }, [open]);
+
+  const list = members
+    .filter(m => `${m.name || ''}${m.english || ''}${m.team || ''}`.toLowerCase().includes((keyword || '').toLowerCase()))
+    .slice(0, 8);
+
+  return (
+    <div className="member-picker" ref={wrapRef}>
+      <div className="member-picker-field">
+        {selected ? <Avatar name={selected.name} src={selected.avatar} size="xs" /> : <UserRound size={15} className="member-picker-icon" />}
+        <input
+          value={keyword}
+          placeholder={placeholder || (isEn ? 'Search a member…' : '搜索成员姓名…')}
+          onFocus={() => { setOpen(true); setQuery(''); }}
+          onChange={e => { setQuery(e.target.value); onChange(''); }}
+        />
+        {value ? <button type="button" className="member-picker-clear" onMouseDown={e => e.preventDefault()} onClick={() => { onChange(''); setQuery(''); }} aria-label="clear"><X size={13} /></button> : null}
+      </div>
+      {open && (
+        <div className="member-picker-menu">
+          {list.length ? list.map(m => (
+            <button type="button" key={m.id} className={m.name === value ? 'selected' : ''} onMouseDown={e => e.preventDefault()} onClick={() => { onChange(m.name); setQuery(''); setOpen(false); }}>
+              <Avatar name={m.name} src={m.avatar} size="xs" />
+              <div><strong>{m.name}</strong><small>{m.team || '—'}{m.role === '组长' ? (isEn ? ' · Lead' : ' · 组长') : ''}</small></div>
+              {m.name === value ? <Check size={14} /> : null}
+            </button>
+          )) : <div className="member-picker-empty">{isEn ? 'No matching member' : '没有匹配的成员'}</div>}
+        </div>
+      )}
+    </div>
+  );
+}
+
+/** 新建 / 编辑任务共用的表单字段。 */
+function TaskFields({ form, update, teams = [], members = [], isEn }) {
+  const L = (zh, en) => (isEn ? en : zh);
+  const points = Number(form.points) || 0;
+  const matchedOwner = members.find(m => m.name === form.owner);
+  return (
+    <div className="form-grid">
+      <Field label={L('任务名称', 'Task title')} required full>
+        <input autoFocus={!form.id} placeholder={L('例如：完成年度大会主视觉设计', 'e.g. Finish the annual event key visual')} value={form.title} onChange={e => update('title', e.target.value)} />
+      </Field>
+      <Field label={L('所属项目', 'Project')}>
+        <input list="task-project-options" value={form.project} onChange={e => update('project', e.target.value)} placeholder={L('可自定义项目名', 'Custom project name')} />
+        <datalist id="task-project-options">{TASK_PROJECTS.map(p => <option key={p} value={p} />)}</datalist>
+      </Field>
+      <Field label={L('任务类型', 'Type')}>
+        <select value={form.type} onChange={e => update('type', e.target.value)}>{TASK_TYPES.map(v => <option key={v} value={v}>{displayValue(v, isEn ? 'en' : 'zh')}</option>)}</select>
+      </Field>
+      <Field label={L('所属团队', 'Team')} required hint={teams.length ? '' : L('请先在「团队管理」建立团队', 'Create a team first')}>
+        <select value={form.team} onChange={e => update('team', e.target.value)}>
+          {!teams.some(team => team.name === form.team) && form.team ? <option value={form.team}>{form.team}</option> : null}
+          {teams.map(team => <option key={team.id} value={team.name}>{team.name}</option>)}
+        </select>
+      </Field>
+      <Field label={L('任务负责人', 'Owner')} required hint={matchedOwner ? `${matchedOwner.team || ''}${matchedOwner.position ? ` · ${matchedOwner.position}` : ''}` : L('从在册成员中选择，积分才能入账', 'Pick a roster member so points can be credited')}>
+        <MemberPicker value={form.owner} members={members} onChange={v => update('owner', v)} isEn={isEn} />
+      </Field>
+      <Field label={L('截止日期', 'Due date')}>
+        <input type="date" value={toDateInput(form.due)} onChange={e => update('due', fromDateInput(e.target.value))} />
+      </Field>
+      <Field label={L('重要程度', 'Priority')}>
+        <div className="radio-group">{['普通', '重要'].map(p => <button type="button" key={p} className={form.priority === p ? 'selected' : ''} onClick={() => update('priority', p)}><i />{displayValue(p, isEn ? 'en' : 'zh')}</button>)}</div>
+      </Field>
+      <Field label={L('任务状态', 'Status')}>
+        <select value={form.status} onChange={e => update('status', e.target.value)}>{TASK_STATUSES.map(v => <option key={v} value={v}>{displayValue(v, isEn ? 'en' : 'zh')}</option>)}</select>
+      </Field>
+      <Field label={L('完成积分', 'Task points')} hint={L('任务完成后自动记入负责人积分账户', 'Credited to the owner once the task is completed')}>
+        <div className="number-input">
+          <input type="number" min="0" max="100" value={form.points} onChange={e => update('points', Math.max(0, Number(e.target.value) || 0))} />
+          <span>{L('分', 'pts')}</span>
+        </div>
+        {points > 0 && form.owner ? <small className="field-inline-hint">{L(`完成后 ${form.owner} 将获得 ${points} 分`, `${form.owner} earns ${points} pts on completion`)}</small> : null}
+      </Field>
+      <Field label={L('任务说明', 'Description')} full>
+        <textarea rows="3" placeholder={L('补充任务目标、交付要求或成果链接…', 'Goal, deliverable or reference link…')} value={form.description} onChange={e => update('description', e.target.value)} />
+      </Field>
+    </div>
+  );
+}
+
+function TaskForm({ teams = [], members = [], onClose, onSave, isEn }) {
+  const L = (zh, en) => (isEn ? en : zh);
+  const [form, setForm] = useState({
+    title: '', project: '2026 年度大会', team: teams[0]?.name || '', owner: '',
+    due: '2026-11-20', status: '未开始', priority: '普通', type: '活动策划',
+    points: 3, description: '',
+  });
   const [error, setError] = useState('');
   const update = (key, value) => setForm(prev => ({ ...prev, [key]: value }));
-  const submit = () => { if (!form.title.trim()) { setError('请填写任务名称'); return; } onSave({ ...form, due: form.due.slice(5).replace('-', '月') + '日' }); };
-  return <Modal title="新建任务" subtitle="记录一项清晰、可追踪的团队工作" onClose={onClose} size="lg" footer={<><Button variant="secondary" onClick={onClose}>取消</Button><Button icon={Check} onClick={submit}>创建任务</Button></>}><div className="form-grid"><Field label="任务名称" required full><input autoFocus placeholder="例如：完成年度大会主视觉设计" value={form.title} onChange={e => update('title', e.target.value)} />{error && <span className="field-error">{error}</span>}</Field><Field label="所属项目"><select value={form.project} onChange={e => update('project', e.target.value)}><option>2026 年度大会</option><option>品牌日常传播</option><option>讲者招募计划</option><option>年度合作计划</option></select></Field><Field label="任务类型"><select value={form.type} onChange={e => update('type', e.target.value)}><option>活动策划</option><option>内容创作</option><option>视觉设计</option><option>品牌传播</option><option>现场执行</option><option>其他</option></select></Field><Field label="所属团队" required><select value={form.team} onChange={e => update('team', e.target.value)}>{initialTeams.map(t => <option key={t.id}>{t.name}</option>)}</select></Field><Field label="任务负责人" required><input value={form.owner} onChange={e => update('owner', e.target.value)} placeholder="填写负责人姓名" /></Field><Field label="截止日期"><input type="date" value={form.due} onChange={e => update('due', e.target.value)} /></Field><Field label="重要程度"><div className="radio-group">{['普通', '重要'].map(p => <button type="button" key={p} className={form.priority === p ? 'selected' : ''} onClick={() => update('priority', p)}><i />{p}</button>)}</div></Field><Field label="任务说明" full><textarea rows="4" placeholder="补充任务目标、交付要求或成果链接…" value={form.description} onChange={e => update('description', e.target.value)} /></Field><Field label="交付成果" full><div className="upload-box"><Paperclip size={20} /><span>点击上传附件，或将文件拖拽到这里</span><small>支持 PDF、图片、文档，单个文件不超过 20MB</small></div></Field></div></Modal>;
+  const submit = () => {
+    if (!form.title.trim()) { setError(L('请填写任务名称', 'Please enter a task title')); return; }
+    if (!form.team) { setError(L('请选择所属团队', 'Please choose a team')); return; }
+    onSave({ ...form, title: form.title.trim(), due: fromDateInput(toDateInput(form.due)), points: Number(form.points) || 0 });
+  };
+  return (
+    <Modal
+      title={L('新建任务', 'New task')}
+      subtitle={L('记录一项清晰、可追踪的团队工作', 'Create a trackable piece of team work')}
+      onClose={onClose}
+      size="lg"
+      footer={<><Button variant="secondary" onClick={onClose}>{L('取消', 'Cancel')}</Button><Button icon={Check} onClick={submit}>{L('创建任务', 'Create task')}</Button></>}
+    >
+      <TaskFields form={form} update={update} teams={teams} members={members} isEn={isEn} />
+      {error ? <span className="field-error">{error}</span> : null}
+    </Modal>
+  );
+}
+
+/** 任务详情：三个点进入，可直接修改任务、调整积分并手动入账。 */
+function TaskDetail({ task, teams = [], members = [], transactions = [], onClose, onSave, onDelete, creditPoints, notify, isEn }) {
+  const L = (zh, en) => (isEn ? en : zh);
+  const [form, setForm] = useState({
+    id: task.id,
+    title: task.title || '',
+    project: task.project || '',
+    type: task.type || '活动策划',
+    team: task.team || '',
+    owner: task.owner || '',
+    due: task.due || '',
+    status: task.status || '未开始',
+    priority: task.priority || '普通',
+    points: Number(task.points) || 0,
+    description: task.note || task.description || '',
+  });
+  const [error, setError] = useState('');
+  const update = (key, value) => setForm(prev => ({ ...prev, [key]: value }));
+  const txId = `tx_task_${task.id}`;
+  const credited = transactions.find(tx => tx.id === txId || tx.report_id === String(task.id)) || null;
+
+  const submit = () => {
+    if (!form.title.trim()) { setError(L('请填写任务名称', 'Please enter a task title')); return; }
+    onSave({ ...form, title: form.title.trim(), points: Number(form.points) || 0 }, { credit: form.status === '已完成' });
+    onClose();
+  };
+  const creditNow = () => {
+    const ok = creditPoints?.({ ...form, id: task.id, owner: form.owner, points: Number(form.points) || 0, team: form.team, title: form.title.trim() });
+    if (!ok) notify?.(L('请先选择负责人并填写大于 0 的积分', 'Choose an owner and set points above 0'));
+  };
+
+  return (
+    <Modal
+      title={L('任务详情', 'Task detail')}
+      subtitle={`${task.team || '—'} · ${task.project || '—'}`}
+      onClose={onClose}
+      size="lg"
+      footer={<>
+        <span className="task-footer-left"><Button variant="danger-ghost" icon={Trash2} onClick={() => onDelete(task)}>{L('删除任务', 'Delete')}</Button></span>
+        <Button variant="secondary" onClick={onClose}>{L('取消', 'Cancel')}</Button>
+        <Button icon={Check} onClick={submit}>{L('保存修改', 'Save changes')}</Button>
+      </>}
+    >
+      <div className="task-detail-summary">
+        <StatusBadge>{form.status}</StatusBadge>
+        <StatusBadge tone={form.priority === '重要' ? 'red' : 'gray'} dot={false}>{displayValue(form.priority, isEn ? 'en' : 'zh')}</StatusBadge>
+        <span><Avatar name={form.owner || '?'} src={members.find(m => m.name === form.owner)?.avatar} size="xs" />{form.owner || L('未指定负责人', 'No owner')}</span>
+        <span><CalendarDays size={14} />{form.due || '—'}</span>
+        <span><Coins size={14} />{Number(form.points) || 0} {L('分', 'pts')}</span>
+      </div>
+
+      <TaskFields form={form} update={update} teams={teams} members={members} isEn={isEn} />
+
+      <div className={`task-credit-box${credited ? ' credited' : ''}`}>
+        <div>
+          <strong>{credited ? L('积分已入账', 'Points credited') : L('积分尚未入账', 'Points not credited yet')}</strong>
+          <p>
+            {credited
+              ? L(`已为 ${credited.member} 记入 ${credited.points} 分（${credited.date}）`, `${credited.points} pts credited to ${credited.member} (${credited.date})`)
+              : L('将任务状态改为「已完成」并保存，或在下方立即入账。积分流水按任务唯一生成，不会重复记账。', 'Set the status to Completed and save, or credit now. Each task credits at most once.')}
+          </p>
+        </div>
+        <Button variant="secondary" icon={Coins} onClick={creditNow} disabled={Boolean(credited) || !form.owner || Number(form.points) <= 0}>{credited ? L('已入账', 'Credited') : L('立即记入积分', 'Credit now')}</Button>
+      </div>
+      {error ? <span className="field-error">{error}</span> : null}
+    </Modal>
+  );
 }
 
 function ReportReview({ report, onClose, onApprove, onReturn }) {
@@ -1707,16 +1998,15 @@ function MemberDetail({ member, transactions = [], tasks = [], teams = [], isAdm
                   </div>
                 </div>
                 <div className="fx-sync-actions">
-                  <button className="button" onClick={runMemberSync} disabled={!isFeishuMember || syncState === 'syncing'}>
-                    {syncState === 'syncing' ? <RefreshCw size={15} className="fx-spin" /> : <Download size={15} />}
+                  <Button icon={syncState === 'syncing' ? RefreshCw : Download} onClick={runMemberSync} disabled={!isFeishuMember || syncState === 'syncing'}>
                     {L('同步此成员', 'Sync this member')}
-                  </button>
-                  <button className="button secondary" onClick={runFullSync} disabled={syncState === 'syncing'}>
-                    <RefreshCw size={15} />{L('同步整个通讯录（含组别与负责人）', 'Sync full directory')}
-                  </button>
-                  <button className="button ghost" onClick={loadOrg} disabled={orgLoading}>
-                    <Users size={15} />{orgLoading ? L('读取中…', 'Loading…') : L('查看组别映射', 'View team mapping')}
-                  </button>
+                  </Button>
+                  <Button variant="secondary" icon={RefreshCw} onClick={runFullSync} disabled={syncState === 'syncing'}>
+                    {L('同步整个通讯录（含组别与负责人）', 'Sync full directory')}
+                  </Button>
+                  <Button variant="secondary" icon={Users} onClick={loadOrg} disabled={orgLoading}>
+                    {orgLoading ? L('读取中…', 'Loading…') : L('查看组别映射', 'View team mapping')}
+                  </Button>
                 </div>
                 {syncResult?.ok && (
                   <div className="fx-sync-result-inline">

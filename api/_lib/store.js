@@ -60,7 +60,7 @@ const COLUMNS = {
   notification_logs: ['event_type', 'target_type', 'target_id', 'status', 'retry_count', 'error', 'created_at', 'message_id', 'payload'],
   points_transactions: ['txid', 'member', 'team', 'type', 'source', 'date', 'status', 'reason', 'rule_id', 'report_id', 'points', 'year', 'month'],
   reports: ['team', 'leader', 'month', 'submitted', 'status', 'summary', 'goal', 'next', 'details', 'active', 'praised_member', 'tasks', 'hours', 'points', 'year'],
-  tasks: ['title', 'project', 'team', 'owner', 'collaborators', 'due', 'priority', 'type', 'status', 'importance', 'start', 'month', 'deliverable', 'link', 'note', 'progress', 'hours', 'year'],
+  tasks: ['title', 'project', 'team', 'owner', 'collaborators', 'due', 'priority', 'type', 'status', 'importance', 'start', 'month', 'deliverable', 'link', 'note', 'progress', 'hours', 'year', 'points'],
   app_settings: ['key', 'value_zh', 'value_en'],
 };
 
