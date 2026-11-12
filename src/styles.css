@@ -851,3 +851,26 @@ button:focus-visible,input:focus-visible,select:focus-visible,textarea:focus-vis
 .team-card-stats small{font-size:11px;color:var(--muted)}
 .team-card-footer button{font-size:12px;color:var(--muted)}
 .team-card-footer button:hover{color:var(--ink)}
+
+/* ---- 首页：年度大会倒计时（页头右侧，替代原「年度」胶囊） ---- */
+.event-countdown{display:flex;align-items:center;gap:12px;padding:4px 14px 4px 0;border-left:0;margin-right:4px}
+.event-countdown-copy{display:flex;flex-direction:column;align-items:flex-end;gap:2px}
+.event-countdown-kicker{display:flex;align-items:center;gap:7px;font-size:12px;color:var(--ink-2);white-space:nowrap}
+.event-countdown-kicker .cue{margin-right:0}
+.event-countdown-copy small{font-size:11px;color:var(--muted);font-variant-numeric:tabular-nums;letter-spacing:.02em}
+.event-countdown-figure{display:flex;align-items:baseline;gap:3px}
+.event-countdown-figure strong{font-size:32px;line-height:1;font-weight:500;letter-spacing:-.02em;font-variant-numeric:tabular-nums;color:var(--ink)}
+.event-countdown-figure small{font-size:11px;color:var(--muted)}
+@media(max-width:900px){
+  .event-countdown{border-left:0;padding:0;gap:10px;margin:0 0 4px}
+  .event-countdown-copy{align-items:flex-start}
+  .event-countdown-kicker{white-space:normal}
+  .event-countdown-figure strong{font-size:28px}
+}
+
+/* 侧栏年度：可选择，但保持纸面观感（无多余边框与箭头按钮） */
+.year-switch{cursor:pointer;transition:border-color .16s var(--ease)}
+.year-switch:hover{border-color:rgba(30,26,21,.22)}
+.year-switch select{flex:1;min-width:0;border:0;background:transparent;font:inherit;font-size:11.5px;font-weight:400;color:var(--muted);appearance:none;-webkit-appearance:none;outline:none;cursor:pointer;padding:0}
+.year-switch:focus-within{outline:2px solid var(--red);outline-offset:2px}
+.year-switch svg{color:var(--muted);flex:none}

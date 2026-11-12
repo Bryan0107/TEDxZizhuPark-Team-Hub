@@ -174,6 +174,12 @@ const dictionaries = {
   }
 };
 
+/** 年度大会：首页倒计时以此为准（2027 年为第 10 届）。 */
+const ANNUAL_EVENT = { date: '2027-04-25', month: 4, day: 25, year: 2027 };
+
+/** 年度切换的可选项：当前只有 2026；新增赛季时在此追加。 */
+const YEAR_OPTIONS = [2026];
+
 const ROLE_PAGES = {
   admin: ['dashboard', 'myPoints', 'reports', 'tasks', 'teams', 'members', 'pointsManagement', 'analytics', 'settings', 'hallAdmin'],
   leader: ['dashboard', 'myPoints', 'reports', 'tasks', 'teams', 'members', 'analytics', 'settings'],
@@ -572,6 +578,7 @@ export default function App() {
 
 function MainApp({ session, onLogout, onSessionUpdate, language, setLanguage }) {
   const [activePage, setActivePage] = useState('dashboard');
+  const [activeYear, setActiveYear] = usePersistentState('tedx-hub-v2-year', 2026);
   const [sidebarOpen, setSidebarOpen] = useState(false);
   const [tasks, setTasks] = useCloudState('tedx-hub-v2-tasks', 'tasks', initialTasks);
   const [reports, setReports] = useCloudState('tedx-hub-v2-reports', 'reports', initialReports);
@@ -818,7 +825,13 @@ function MainApp({ session, onLogout, onSessionUpdate, language, setLanguage }) 
       <div className="brand" onClick={() => navigate('dashboard')}>
         <img className="brand-lockup" src="/assets/brand-lockup.svg" alt="TEDxZizhuPark Team Hub" />
       </div>
-      <div className="year-switch static"><CalendarDays size={16} /><span>{t('year2026')}</span></div>
+      <label className="year-switch">
+        <CalendarDays size={14} />
+        <select value={activeYear} onChange={e => setActiveYear(Number(e.target.value))} aria-label={isEn ? 'Season' : '年度'}>
+          {YEAR_OPTIONS.map(year => <option key={year} value={year}>{isEn ? `${year} season` : `${year} 年度`}</option>)}
+        </select>
+        <ChevronDown size={13} />
+      </label>
       <nav className="side-nav">
         {navGroups.map(group => <div className="nav-group" key={group.label}><div className="nav-label">{group.label}</div>{group.items.map(item => {
           const Icon = item.icon;
@@ -1010,9 +1023,20 @@ function Dashboard({ teams, reports, tasks, members, transactions, monthlyTrend 
   const weekdayLabel = isEn ? nowDate.toLocaleDateString('en-US', { weekday: 'short' }) : `周${'日一二三四五六'[nowDate.getDay()]}`;
   const pageHeading = isEn ? `${nowDate.toLocaleDateString('en-US', { month: 'long' })} · Team operations` : `${nowDate.getMonth() + 1} 月 · 团队运行`;
   const pageSub = [cleanGreeting, `${nowDate.getMonth() + 1} 月 ${nowDate.getDate()} 日 ${weekdayLabel}`].filter(Boolean).join(' · ');
+  // 年度大会倒计时：按本地日期差计算，当天显示「今天」，过期后显示「已举办」。
+  const eventDate = new Date(ANNUAL_EVENT.year, ANNUAL_EVENT.month - 1, ANNUAL_EVENT.day);
+  const eventDays = Math.round((eventDate - new Date(nowDate.getFullYear(), nowDate.getMonth(), nowDate.getDate())) / 86400000);
+  const eventFigure = eventDays > 0 ? String(eventDays) : eventDays === 0 ? (isEn ? 'Today' : '今天') : (isEn ? 'Done' : '已办');
+  const eventUnit = eventDays > 0 ? (isEn ? 'days' : '天') : '';
 
   return <div className="page dashboard-page">
-    <PageTitle title={pageHeading} subtitle={pageSub} actions={<><span className="static-year"><CalendarDays size={14} />{t('year2026')}</span><Button variant="secondary" icon={Download} onClick={() => exportCsv(isEn ? 'Annual Team Data' : '年度团队数据')}>{t('exportData')}</Button></>} />
+    <PageTitle title={pageHeading} subtitle={pageSub} actions={<><div className="event-countdown" title={isEn ? `${eventDays} days to the 10th annual conference` : `距第 10 届年度大会还有 ${eventDays} 天`}>
+        <div className="event-countdown-copy">
+          <span className="event-countdown-kicker"><i className="cue" />{isEn ? 'TEDxZizhuPark 10th Annual Conference' : 'TEDxZizhuPark 10th 年度大会'}</span>
+          <small>{isEn ? 'April 25, 2027' : '2027 年 4 月 25 日'}</small>
+        </div>
+        <div className="event-countdown-figure"><strong>{eventFigure}</strong>{eventUnit ? <small>{eventUnit}</small> : null}</div>
+      </div><Button variant="secondary" icon={Download} onClick={() => exportCsv(isEn ? 'Annual Team Data' : '年度团队数据')}>{t('exportData')}</Button></>} />
 
     <section className="deadline-banner">
       <div className="deadline-copy"><div><strong>{reportCycleLabel}</strong><span className="cue-meta"><i className="cue" />{daysLeftLabel}</span></div><p>{isEn ? `${submitted} of ${teamCount} reports submitted. ${notSubmitted} teams have not started yet.` : `已提交 ${submitted} / ${teamCount} 份月报，还有 ${notSubmitted} 个团队尚未完成填报。`}</p></div>
