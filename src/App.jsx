@@ -519,6 +519,7 @@ export default function App() {
             id: s.id,
             name: s.name,
             email: s.email,
+            avatar: s.avatar || '',
             provider: s.provider || 'feishu',
             prefs: {
               role: s.role || 'member',
@@ -582,6 +583,33 @@ function MainApp({ session, onLogout, onSessionUpdate, language, setLanguage }) 
   const pageMeta = getPageMeta(t);
   // 全部展示用数据都由数据库真实记录推导，避免出现写死的示意数字。
   const activeMembers = useMemo(() => members.filter(m => m.member_status === 'active'), [members]);
+  // 当前登录者对应的成员档案：左下角个人卡片要显示飞书头像，而不是字母占位。
+  const myMember = useMemo(() => {
+    if (!session) return null;
+    const byId = session.id ? members.find(m => m.id === session.id) : null;
+    if (byId) return byId;
+    const email = String(session.email || '').toLowerCase();
+    if (email) {
+      const hit = members.find(m => m.email && String(m.email).toLowerCase() === email);
+      if (hit) return hit;
+    }
+    // 只在在编成员里按姓名匹配，并优先选有飞书头像的记录（历史档案常有重名/旧记录）。
+    const pool = members.filter(m => m.member_status === 'active');
+    const pick = list => list.find(m => m.avatar || m.avatar_240 || m.avatar_72) || list[0] || null;
+    const name = session.prefs?.displayName || session.name || '';
+    const exact = pool.filter(m => m.name === name);
+    if (exact.length) return pick(exact);
+    // 兜底：中文名 / 英文名书写不一致时做归一化前缀匹配（至少 3 个字符，避免误配）。
+    const squash = value => String(value || '').toLowerCase().replace(/[\s·.\-_()（）]/g, '');
+    const target = squash(name);
+    if (target.length < 3) return null;
+    return pick(pool.filter(m => {
+      const candidate = squash(m.name);
+      if (!candidate) return false;
+      return candidate === target || candidate.startsWith(target) || target.startsWith(candidate);
+    }));
+  }, [members, session]);
+  const userAvatar = myMember?.avatar || myMember?.avatar_240 || myMember?.avatar_72 || session?.avatar || session?.prefs?.avatar || '';
   const teamView = useMemo(() => enrichTeams({ teams, members, tasks, reports, transactions }), [teams, members, tasks, reports, transactions]);
   const monthlyTrend = useMemo(() => buildMonthlyTrend({ tasks, reports, transactions, isEn }), [tasks, reports, transactions, isEn]);
   const notifications = useMemo(() => buildNotifications({ reports, transactions, members, tasks, isEn }), [reports, transactions, members, tasks, isEn]);
@@ -685,7 +713,7 @@ function MainApp({ session, onLogout, onSessionUpdate, language, setLanguage }) 
         <button className={`nav-item ${activePage === 'settings' ? 'active' : ''}`} onClick={() => navigate('settings')}><Settings size={18} /><span>{t('settings')}</span></button>
         <div className="side-help"><span><HelpCircle size={18} /></span><div><strong>{t('helpTitle')}</strong><p>{t('helpText')}</p></div><ChevronRight size={15} /></div>
         <div className="profile-wrap">
-          <button className="profile" onClick={() => setProfileOpen(!profileOpen)}><Avatar name={displayName} /><div><strong>{displayName}</strong><span>{roleLabel(role, isEn)}</span></div><MoreHorizontal size={18} /></button>
+          <button className="profile" onClick={() => setProfileOpen(!profileOpen)}><Avatar name={displayName} src={userAvatar} /><div><strong>{displayName}</strong><span>{roleLabel(role, isEn)}</span></div><MoreHorizontal size={18} /></button>
           {profileOpen && <div className="profile-menu"><div className="profile-menu-title">{session.email}</div><div className="profile-menu-role">{roleLabel(role, isEn)}{session.prefs.team ? ` · ${session.prefs.team}` : ''}</div><hr /><button onClick={async () => { setProfileOpen(false); await onLogout(); }}><LogOut size={15} /><span>{t('signOut')}</span></button></div>}
         </div>
       </div>

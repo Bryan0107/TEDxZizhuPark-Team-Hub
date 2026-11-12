@@ -10,12 +10,15 @@ const normalize = (me, prefs = {}) => ({
   id: me.$id,
   name: me.name || me.email?.split('@')[0] || 'Member',
   email: me.email,
+  // 飞书头像地址存在账号 prefs.avatar（同步任务会回写），没有时退回 Appwrite 账号头像。
+  avatar: prefs.avatar || '',
   prefs: {
     role: prefs.role || 'member',
     team: prefs.team || '',
     displayName: prefs.displayName || me.name || '',
     greeting: prefs.greeting || '',
     greetingEn: prefs.greetingEn || '',
+    avatar: prefs.avatar || '',
   },
 });
 
