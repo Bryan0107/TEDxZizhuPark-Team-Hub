@@ -242,6 +242,14 @@ export async function getDepartment(openDepartmentId) {
 // ── 字段映射 ───────────────────────────────────────────────────────
 const AVATAR_KEYS = ['avatar_72', 'avatar_240', 'avatar_640', 'avatar_origin'];
 
+/** 飞书 job_title 里常见「团队成员 Team members」这类占位值，展示时不作为职务。 */
+const cleanJobTitle = value => {
+  const v = String(value || '').trim();
+  if (!v) return '';
+  if (v.length <= 24 && /团队成员|team\s*members?|^member$/i.test(v)) return '';
+  return v;
+};
+
 /** 飞书用户 → Team Hub members 可写字段（严格列白名单）。 */
 export function mapFeishuUser(u) {
   const avatar = {};
@@ -265,7 +273,7 @@ export function mapFeishuUser(u) {
     feishu_union_id: u.union_id || '',
     feishu_user_id: u.user_id || '',
     nickname: u.nickname || '',
-    position: (u.job_title || '').trim(),
+    position: cleanJobTitle(u.job_title),
     avatar_72: avatar.avatar_72,
     avatar_240: avatar.avatar_240,
     avatar_640: avatar.avatar_640,

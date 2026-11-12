@@ -9,7 +9,7 @@
  * - 同一 open_id 只对应一条 members 记录（幂等 upsert）
  */
 import crypto from 'node:crypto';
-import { listAllUsers, mapFeishuUser, listAllDepartments, mapFeishuDepartment } from './feishu.js';
+import { listAllUsers, mapFeishuUser, listAllDepartments, mapFeishuDepartment, getUser } from './feishu.js';
 import { listAll as dbListAll, upsert, findOne, logSync, saveIntegration, newId, INTEGRATION_ROW } from './store.js';
 import { notifyEvent } from './notify.js';
 
@@ -43,22 +43,37 @@ const mapLimit = async (items, limit, fn) => {
 };
 
 /**
- * 飞书部门 → 团队名的正则兜底（仅在部门树不可用时使用）。
- * 正常情况下团队名直接使用飞书真实顶层部门（见 runSync 中的 teamFor）。
- * 「储备策展团队」不是当期在编成员，单独进入后备现场志愿者档案。
+ * 飞书顶层部门 → Team Hub 团队名（一一对应）。
+ *
+ * 当前飞书组织架构（2026-11 实测）：
+ *   Team 管理支持团队        → 团队组
+ *   Content 内容团队         → 内容组
+ *   Media 媒体团队           → 媒体组       （含子部门「访谈团队 Interview Team」）
+ *   Partnerships 伙伴关系团队 → 伙伴关系组
+ *   储备策展团队 Reserve…     → 不是当期在编团队，单独进后备档案
+ *
+ * 只对「顶层部门」套用规则，子部门先上溯到顶层，避免「访谈团队」被误判为团队组。
  */
-const DEPT_TEAM_RULES = [
+const TEAM_DEPT_RULES = [
+  [/储备|后备|reserve/i, ''],
   [/内容|content/i, '内容组'],
   [/媒体|media/i, '媒体组'],
   [/伙伴|partnership|合作/i, '伙伴关系组'],
-  [/管理支持|团队|\bteam\b/i, '团队组'],
+  [/管理支持|管理|support|team/i, '团队组'],
 ];
 
 export const isReserveDept = name => /储备|后备|reserve/i.test(name || '');
 
 export const mapDeptToTeam = name => {
-  for (const [re, team] of DEPT_TEAM_RULES) if (re.test(name || '')) return team;
+  if (!name) return '';
+  for (const [re, team] of TEAM_DEPT_RULES) if (re.test(name)) return team;
   return '';
+};
+
+const safeJson = value => {
+  if (!value) return {};
+  if (typeof value === 'object') return value;
+  try { return JSON.parse(value); } catch { return {}; }
 };
 
 /**
@@ -115,11 +130,14 @@ export async function runSync(mode = 'incremental', { actor = 'system', notify =
       }
     }
 
-    // 部门父子关系 + 顶层分组解析（把成员部门映射到飞书真实顶层团队，而非硬编码 4 组）。
+    // 部门父子关系 + 顶层分组解析（把成员部门上溯到飞书真实顶层团队）。
     const deptParentById = new Map();
-    for (const d of depts.items) if (d.open_department_id) deptParentById.set(d.open_department_id, d.parent_department_id || '0');
-    const resolveTopGroup = (openDeptId) => {
-      let cur = openDeptId;
+    for (const d of depts.items) {
+      if (!d.open_department_id) continue;
+      deptParentById.set(d.open_department_id, d.parent_department_id || '0');
+    }
+    const topDeptOf = (deptId) => {
+      let cur = deptId;
       const seen = new Set();
       while (cur && !seen.has(cur)) {
         seen.add(cur);
@@ -127,10 +145,60 @@ export async function runSync(mode = 'incremental', { actor = 'system', notify =
         if (!parent || parent === '0' || !deptParentById.has(parent)) break;
         cur = parent;
       }
-      return deptNameById.get(cur) || '';
+      return cur || '';
     };
-    // 团队名优先用飞书真实顶层部门；部门树不可用时退回正则推断，保证不空。
-    const teamFor = (deptId) => resolveTopGroup(deptId) || mapDeptToTeam(deptNameById.get(deptId) || '');
+    const topDeptNameOf = deptId => deptNameById.get(topDeptOf(deptId)) || '';
+
+    // 部门负责人 = 组长：顶层部门的 leader_user_id 即该组组长。
+    const feishuUserByOpen = new Map();
+    for (const u of usersRes.items) if (u.open_id) feishuUserByOpen.set(u.open_id, u);
+    const leaderByTopDept = new Map();   // topDeptId -> { openId, name }
+    const teamLeaderByName = new Map();  // 团队名 -> { openId, name, deptId, deptName }
+    const ledTeamByOpenId = new Map();   // openId -> 团队名（该成员担任负责人的组）
+    for (const d of depts.items) {
+      if (!d.open_department_id || (d.parent_department_id || '0') !== '0') continue;
+      if (!d.leader_user_id) continue;
+      const leaderName = feishuUserByOpen.get(d.leader_user_id)?.name || '';
+      leaderByTopDept.set(d.open_department_id, { openId: d.leader_user_id, name: leaderName });
+      const teamName = mapDeptToTeam(d.name || '');
+      if (teamName) {
+        teamLeaderByName.set(teamName, { openId: d.leader_user_id, name: leaderName, deptId: d.open_department_id, deptName: d.name || '' });
+        ledTeamByOpenId.set(d.leader_user_id, teamName);
+      }
+    }
+
+    // 把「组 ↔ 飞书部门 ↔ 部门负责人」写回 teams 表，保证前端团队页与飞书一致。
+    report.teamMapping = [];
+    try {
+      const teamRows = await dbListAll('teams');
+      const teamByName = new Map(teamRows.map(row => [row.name, row]));
+      for (const [teamName, info] of teamLeaderByName) {
+        const row = teamByName.get(teamName);
+        if (!row) continue;
+        const patch = {};
+        if (info.name && info.name !== (row.leader || '')) patch.leader = info.name;
+        if (info.deptId !== (row.feishu_open_department_id || '')) patch.feishu_open_department_id = info.deptId;
+        if (info.deptName !== (row.feishu_department_name || '')) patch.feishu_department_name = info.deptName;
+        if (Object.keys(patch).length) {
+          await upsert('teams', row.id, patch);
+          report.teamsUpdated = (report.teamsUpdated || 0) + 1;
+        }
+        report.teamMapping.push({ team: teamName, dept: info.deptName, leader: info.name, memberCount: 0 });
+      }
+      // 没有负责人的组也把部门 ID 记下来，便于前端展示映射关系
+      for (const [teamName, row] of teamByName) {
+        const mapped = report.teamMapping.find(item => item.team === teamName);
+        if (mapped) continue;
+        const topDept = depts.items.find(d => (d.parent_department_id || '0') === '0' && mapDeptToTeam(d.name || '') === teamName);
+        if (topDept && topDept.open_department_id !== (row.feishu_open_department_id || '')) {
+          await upsert('teams', row.id, { feishu_open_department_id: topDept.open_department_id, feishu_department_name: topDept.name || '' });
+          report.teamsUpdated = (report.teamsUpdated || 0) + 1;
+        }
+        report.teamMapping.push({ team: teamName, dept: topDept?.name || row.feishu_department_name || '', leader: row.leader || '', memberCount: 0 });
+      }
+    } catch (err) {
+      report.errors.push(`团队映射写入失败：${err.message}`);
+    }
 
     // 现有成员-部门关联（避免每次同步重复写）
     const pendingLinks = [];
@@ -149,7 +217,7 @@ export async function runSync(mode = 'incremental', { actor = 'system', notify =
 
       // 储备部门成员：不进入在编成员，写入后备现场志愿者档案
       const deptNames = deptIds.map(id => deptNameById.get(id) || '').filter(Boolean);
-      if (deptNames.some(isReserveDept)) {
+      if (deptNames.length && deptNames.every(isReserveDept)) {
         const profileRaw = mapFeishuUser(raw);
         try {
           await upsert('reserve_volunteers', `rv_${raw.open_id}`.slice(0, 36), {
@@ -166,6 +234,12 @@ export async function runSync(mode = 'incremental', { actor = 'system', notify =
           });
           report.reserve++;
           report.reserveUsers.push({ name: profileRaw.name, dept: deptNames.join(' / ') });
+          // 若此人原本在编，改为归档（历届），不删除任何历史贡献
+          const archived = byOpenId.get(raw.open_id);
+          if (archived && archived.member_status === 'active') {
+            await upsert('members', archived.id, { member_status: 'alumni', team: '储备策展团队', sync_state: 'synced', last_sync_at: new Date().toISOString() });
+            report.archivedReserve = (report.archivedReserve || 0) + 1;
+          }
         } catch (err) {
           report.failed++;
           report.errors.push(`后备志愿者 ${profileRaw.name} 写入失败：${err.message}`);
@@ -179,18 +253,50 @@ export async function runSync(mode = 'incremental', { actor = 'system', notify =
       if (!member && raw.name) { member = byName.get(norm(raw.name)); linkedBy = 'name'; }
 
       try {
+        // 组别 / 部门 / 负责人解析（组别统一成我们的团队名，部门与负责人来自飞书）
+        const topDeptId = topDeptOf(deptIds[0] || '');
+        const topDeptName = deptNameById.get(topDeptId) || '';
+        // 组长 = 某个顶层部门的负责人（负责人本人可能挂在别的部门下，因此以「负责的组」优先）。
+        const ledTeam = ledTeamByOpenId.get(raw.open_id) || '';
+        const realTeam = ledTeam || mapDeptToTeam(topDeptName);
+        const leader = leaderByTopDept.get(topDeptId);
+        const isLeader = Boolean(ledTeam);
+        // 若本人是某个组的负责人，档案里的「部门 / 负责人」以他负责的组为准（负责人可能挂在别的部门下）。
+        const ledInfo = ledTeam ? teamLeaderByName.get(ledTeam) : null;
+        const profileDeptName = ledInfo?.deptName || topDeptName;
+        const profileLeader = ledInfo ? { openId: raw.open_id, name: incoming.name } : leader;
+        const mergedProfile = {
+          ...safeJson(incoming.feishu_profile),
+          departments: deptNames,
+          department_name: profileDeptName,
+          leader_open_id: profileLeader?.openId || '',
+          leader_name: profileLeader?.name || '',
+          team_name: realTeam,
+        };
+        incoming.feishu_profile = JSON.stringify(mergedProfile);
+
         if (member) {
           const changed = diffFields(member, incoming);
           const patch = { ...incoming };
           // 团队 / 职务以飞书真实部门结构为准（用户要求与实际一致，不再统一写「策展团队」）。
-          const realTeam = teamFor(deptIds[0]);
           if (realTeam) patch.team = realTeam;
-          if (incoming.position) patch.position = incoming.position;
-          // 团队 / 职务 / 邮箱属于身份字段：即使其它字段未变，只要这些字段有差异也要落库，
+          // 职务以飞书 job_title 为准；飞书为空或仅为占位值（如「团队成员」）时清空，避免展示假职务。
+          patch.position = incoming.position || '';
+          // 部门负责人 = 组长：组长身份由飞书顶层部门的 leader_user_id 决定。
+          if (isLeader && member.role !== '组长') patch.role = '组长';
+          if (!isLeader && (!member.role || member.role === '策展团队成员' || member.role === '组长')) patch.role = '成员';
+          // 现任组别的负责人一定是当期成员：若被误归档为历届，自动恢复在编。
+          if (isLeader && member.member_status === 'alumni' && member.sync_state !== 'pending_leave') {
+            patch.member_status = 'active';
+            if (!member.status || member.status === '历届成员') patch.status = '正常';
+            report.reactivated = (report.reactivated || 0) + 1;
+          }
+          // 团队 / 职务 / 邮箱 / 身份属于身份字段：即使其它字段未变，只要这些字段有差异也要落库，
           // 否则已存在成员（按 open_id 匹配且无其它字段变化）的团队/职务/邮箱永远不会被刷新。
-          const teamChanged = realTeam && realTeam !== (member.team || '');
-          const positionChanged = Boolean(incoming.position) && incoming.position !== (member.position || '');
+          const teamChanged = Boolean(patch.team) && patch.team !== (member.team || '');
+          const positionChanged = (incoming.position || '') !== (member.position || '');
           const emailChanged = Boolean(incoming.email) && incoming.email !== (member.email || '');
+          const roleChanged = Boolean(patch.role) && patch.role !== (member.role || '');
           if (!member.member_status) patch.member_status = member.status === '历届成员' ? 'alumni' : 'active';
           if (member.is_login_enabled === undefined || member.is_login_enabled === null) {
             patch.is_login_enabled = member.member_status !== 'alumni' && member.member_status !== 'inactive';
@@ -200,10 +306,10 @@ export async function runSync(mode = 'incremental', { actor = 'system', notify =
             patch.sync_state = 'synced';
             report.reactivated = (report.reactivated || 0) + 1;
           }
-          if (changed.length || teamChanged || positionChanged || emailChanged || linkedBy !== 'open_id' || member.sync_state === 'pending_leave') {
+          if (changed.length || teamChanged || positionChanged || emailChanged || roleChanged || linkedBy !== 'open_id' || member.sync_state === 'pending_leave') {
             await upsert('members', member.id, patch);
             report.updated++;
-            report.updatedUsers.push({ id: member.id, name: incoming.name, changed, linkedBy: linkedBy === 'open_id' ? undefined : linkedBy });
+            report.updatedUsers.push({ id: member.id, name: incoming.name, changed, linkedBy: linkedBy === 'open_id' ? undefined : linkedBy, team: patch.team, role: patch.role });
             byOpenId.set(raw.open_id, { ...member, ...patch });
           } else {
             report.unchanged++;
@@ -214,7 +320,7 @@ export async function runSync(mode = 'incremental', { actor = 'system', notify =
           const profile = JSON.parse(incoming.feishu_profile || '{}');
           const newMember = {
             ...incoming,
-            role: '成员',
+            role: isLeader ? '组长' : '成员',
             status: '正常',
             member_status: 'active',
             is_login_enabled: true,
@@ -225,7 +331,7 @@ export async function runSync(mode = 'incremental', { actor = 'system', notify =
             totalPoints: 0,
             tasks: 0,
             events: 0,
-            team: teamFor(deptIds[0]),
+            team: realTeam || '',
             position: incoming.position || '',
             joined: profile.join_date || `${year}.${String(new Date().getMonth() + 1).padStart(2, '0')}`,
             first_join_year: Number(String(profile.join_date || year).slice(0, 4)) || year,
@@ -337,6 +443,9 @@ export async function runSync(mode = 'incremental', { actor = 'system', notify =
       pendingLeave: report.pendingLeave,
       departments: report.departments,
       memberDepartments: report.memberDepartments,
+      teamsUpdated: report.teamsUpdated || 0,
+      teamMapping: report.teamMapping || [],
+      archivedReserve: report.archivedReserve || 0,
       reserve: report.reserve,
       failed: report.failed,
       deptScopeDenied: report.deptScopeDenied,
@@ -361,6 +470,136 @@ export async function runSync(mode = 'incremental', { actor = 'system', notify =
     });
     return { ok: false, error: err.message, code: err.code, partial: report };
   }
+}
+
+/**
+ * 飞书组织快照：组别 ↔ 飞书部门 ↔ 部门负责人，以及邮箱字段可见性。
+ * 供「成员档案 → 飞书同步」面板展示映射关系。
+ */
+export async function getFeishuOrganization() {
+  const [depts, users, teamRows] = await Promise.all([listAllDepartments(), listAllUsers(), dbListAll('teams').catch(() => [])]);
+  const byOpen = new Map();
+  for (const u of users.items || []) if (u.open_id) byOpen.set(u.open_id, u);
+  const deptById = new Map((depts.items || []).map(d => [d.open_department_id, d]));
+
+  const departments = (depts.items || []).map(d => {
+    const parent = deptById.get(d.parent_department_id);
+    const leader = byOpen.get(d.leader_user_id);
+    const isTop = (d.parent_department_id || '0') === '0';
+    return {
+      id: d.open_department_id,
+      name: d.name || '',
+      parentId: isTop ? '' : d.parent_department_id,
+      parentName: parent?.name || '',
+      isTop,
+      leaderName: leader?.name || '',
+      leaderOpenId: d.leader_user_id || '',
+      memberCount: Number(d.member_count) || 0,
+      team: mapDeptToTeam(isTop ? (d.name || '') : (parent?.name || '')),
+      isReserve: isReserveDept(d.name || ''),
+    };
+  });
+
+  const emailUsers = (users.items || []).filter(u => u.email);
+  return {
+    ok: true,
+    departments,
+    teams: teamRows.map(t => ({
+      id: t.id,
+      name: t.name,
+      leader: t.leader || '',
+      feishuOpenDepartmentId: t.feishu_open_department_id || '',
+      feishuDepartmentName: t.feishu_department_name || '',
+    })),
+    email: { withEmail: emailUsers.length, total: (users.items || []).length },
+    deptScopeDenied: Boolean(depts.scopeDenied),
+    checkedAt: new Date().toISOString(),
+  };
+}
+
+/**
+ * 单人同步：把一个成员的飞书资料（组别 / 职务 / 邮箱 / 头像 / 部门负责人）拉回档案。
+ * 只返回待写入的 patch，由调用方决定是否落库（前端确认后写回，保持可审计）。
+ */
+export async function buildMemberPatch({ openId, memberId }) {
+  const members = await dbListAll('members');
+  let member = memberId ? members.find(m => m.id === memberId) : null;
+  if (!member && openId) member = members.find(m => m.feishu_open_id === openId);
+  const targetOpenId = openId || member?.feishu_open_id || '';
+  if (!targetOpenId) {
+    return { ok: false, code: 'NO_FEISHU_ID', error: '该成员没有飞书 open_id，无法从飞书同步。' };
+  }
+
+  const [user, depts] = await Promise.all([getUser(targetOpenId), listAllDepartments()]);
+  if (!user) return { ok: false, code: 'NOT_FOUND', error: '飞书通讯录中未找到该成员。' };
+
+  const deptRows = depts.items || [];
+  const parentById = new Map(deptRows.map(d => [d.open_department_id, d.parent_department_id || '0']));
+  const nameById = new Map(deptRows.map(d => [d.open_department_id, d.name || '']));
+  const rowById = new Map(deptRows.map(d => [d.open_department_id, d]));
+  const deptIds = user.department_ids || [];
+
+  let topId = deptIds[0] || '';
+  const seen = new Set();
+  while (topId && !seen.has(topId)) {
+    seen.add(topId);
+    const parent = parentById.get(topId);
+    if (!parent || parent === '0' || !parentById.has(parent)) break;
+    topId = parent;
+  }
+  const topDept = rowById.get(topId) || null;
+  // 组长判定：负责人可能挂在别的部门下，因此先看「他负责哪个顶层部门」。
+  const ledDept = deptRows.find(d => (d.parent_department_id || '0') === '0' && d.leader_user_id === targetOpenId) || null;
+  const ledTeam = ledDept ? mapDeptToTeam(ledDept.name || '') : '';
+  const isLeader = Boolean(ledTeam);
+  const teamName = ledTeam || (topDept ? mapDeptToTeam(topDept.name || '') : '');
+  const deptNames = deptIds.map(id => nameById.get(id) || '').filter(Boolean);
+
+  const incoming = mapFeishuUser(user);
+  let leaderName = '';
+  if (isLeader) {
+    leaderName = incoming.name || '';
+  } else if (topDept?.leader_user_id) {
+    try { leaderName = (await getUser(topDept.leader_user_id))?.name || ''; } catch { leaderName = ''; }
+  }
+
+  const profile = {
+    ...safeJson(incoming.feishu_profile),
+    departments: deptNames,
+    department_name: isLeader ? (ledDept?.name || '') : (topDept?.name || ''),
+    leader_open_id: isLeader ? targetOpenId : (topDept?.leader_user_id || ''),
+    leader_name: leaderName,
+    team_name: teamName,
+  };
+
+  const patch = {
+    feishu_profile: JSON.stringify(profile),
+    feishu_departments: JSON.stringify(deptIds),
+    last_sync_at: new Date().toISOString(),
+    sync_state: 'synced',
+  };
+  if (incoming.name) patch.name = incoming.name;
+  if (incoming.english) patch.english = incoming.english;
+  if (incoming.email) patch.email = incoming.email;
+  if (incoming.position !== undefined) patch.position = incoming.position || '';
+  if (incoming.avatar) { patch.avatar = incoming.avatar; patch.avatar_240 = incoming.avatar_240; patch.avatar_72 = incoming.avatar_72; }
+  if (teamName) patch.team = teamName;
+  if (isLeader) patch.role = '组长';
+  else if (!member?.role || member.role === '组长') patch.role = '成员';
+  if (isLeader && member?.member_status === 'alumni') { patch.member_status = 'active'; patch.status = '正常'; }
+
+  return {
+    ok: true,
+    openId: targetOpenId,
+    memberId: member?.id || '',
+    patch,
+    team: teamName,
+    departments: deptNames,
+    leader: { name: leaderName, openId: topDept?.leader_user_id || '' },
+    isLeader,
+    email: { value: incoming.email || '', available: Boolean(incoming.email) },
+    hasAvatar: Boolean(incoming.avatar),
+  };
 }
 
 export { INTEGRATION_ROW, findOne };

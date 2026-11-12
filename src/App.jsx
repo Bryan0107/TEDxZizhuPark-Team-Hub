@@ -8,19 +8,19 @@ import {
   MessageSquareText, History, ShieldCheck, LogOut, HelpCircle, Check,
   UserPlus, Users, BriefcaseBusiness, Activity, Award, Star, SlidersHorizontal,
   ChevronLeft, Eye, Pencil, RotateCcw, Info, ExternalLink, Copy, CheckCircle2,
-  FileSpreadsheet, Upload, Trash2, LockKeyhole, Database, Palette, Globe2
+  FileSpreadsheet, Upload, Trash2, LockKeyhole, Database, Palette, Globe2, RefreshCw
 } from 'lucide-react';
 import {
   AreaChart, Area, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer,
   BarChart, Bar, Cell, PieChart, Pie, LineChart, Line, Legend
 } from 'recharts';
-import { teams as initialTeams, members as initialMembers, initialTasks, initialReports, pointTransactions, reserveVolunteers, trendData } from './data';
+import { teams as initialTeams, members as initialMembers, initialTasks, initialReports, pointTransactions, reserveVolunteers } from './data';
 import { fetchTable, syncTable, fetchSettings, saveSettings, fetchAppSetting, saveAppSetting, removeRow, pingCloud, APPWRITE_ENDPOINT, APPWRITE_PROJECT, DB } from './api';
 import HallOfHonor, { HallAdmin } from './hall';
 import './hall.css';
 import { getCurrentUser, signIn, signOut, updateMyPrefs, roleLabel } from './auth';
 import FeishuSettings from './FeishuSettings';
-import { getFeishuSession, logoutFeishu, notifyFeishu } from './feishu';
+import { getFeishuSession, logoutFeishu, notifyFeishu, feishuSync, feishuSyncMember, feishuOrgSnapshot } from './feishu';
 
 const statusTone = {
   '已通过': 'green', '已入账': 'green', '已完成': 'green', '活跃': 'green', '正常': 'blue',
@@ -357,6 +357,91 @@ function greetingSubtitle(language, date = new Date()) {
     : `${formatted} · 每一次参与，都值得被记录。`;
 }
 
+/* ── 真实数据聚合（替代原先的示意曲线与写死数字） ─────────────────── */
+
+/** 从记录的 month 字段或日期字符串推断月份（1-12），无法判断时返回 0。 */
+function monthIndex(item) {
+  const raw = item?.month;
+  if (typeof raw === 'number' && raw >= 1 && raw <= 12) return raw;
+  const hit = String(raw ?? '').match(/(\d{1,2})\s*月/);
+  if (hit) { const n = Number(hit[1]); if (n >= 1 && n <= 12) return n; }
+  const iso = txNormalizeDate(item?.date || item?.due || item?.submitted || '');
+  const m = Number(String(iso).split('-')[1] || 0);
+  return m >= 1 && m <= 12 ? m : 0;
+}
+
+const MONTH_LABELS_EN = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
+
+/** 按真实任务 / 月报 / 积分流水聚合出 12 个月的组织运行数据。 */
+function buildMonthlyTrend({ tasks = [], reports = [], transactions = [], isEn = false }) {
+  return Array.from({ length: 12 }, (_, i) => {
+    const m = i + 1;
+    const txMonth = transactions.filter(tx => monthIndex(tx) === m);
+    const taskMonth = tasks.filter(t => monthIndex(t) === m);
+    const reportMonth = reports.filter(r => monthIndex(r) === m);
+    const actives = new Set();
+    txMonth.forEach(tx => { if (tx.member) actives.add(tx.member); });
+    taskMonth.forEach(t => { if (t.owner) actives.add(t.owner); (t.collaborators || []).forEach(n => actives.add(n)); });
+    return {
+      month: isEn ? MONTH_LABELS_EN[i] : `${m}月`,
+      workload: Math.round(taskMonth.reduce((s, t) => s + (Number(t.hours) || 0), 0) + reportMonth.reduce((s, r) => s + (Number(r.hours) || 0), 0)),
+      active: actives.size,
+      points: txMonth.reduce((s, tx) => s + (Number(tx.points) || 0), 0),
+    };
+  });
+}
+
+/** 团队统计全部由成员 / 任务 / 月报 / 积分流水实时推导，不再读取静态列。 */
+function enrichTeams({ teams = [], members = [], tasks = [], reports = [], transactions = [] }) {
+  return teams.map(team => {
+    const roster = members.filter(m => m.member_status === 'active' && m.team === team.name);
+    const teamTasks = tasks.filter(t => t.team === team.name);
+    const teamReports = reports.filter(r => r.team === team.name);
+    const txPoints = transactions.filter(tx => tx.team === team.name).reduce((s, tx) => s + (Number(tx.points) || 0), 0);
+    const memberPoints = roster.reduce((s, m) => s + (Number(m.points) || 0), 0);
+    const workload = teamTasks.reduce((s, t) => s + (Number(t.hours) || 0), 0) + teamReports.reduce((s, r) => s + (Number(r.hours) || 0), 0);
+    const leader = team.leader || roster.find(m => m.role === '组长')?.name || '';
+    return {
+      ...team,
+      leader,
+      members: roster.length,
+      active: roster.filter(m => m.status === '正常').length,
+      tasks: teamTasks.length,
+      done: teamTasks.filter(t => t.status === '已完成').length,
+      points: txPoints || memberPoints,
+      workload,
+      status: teamReports[0]?.status || '未开始',
+      avatars: roster.slice(0, 6).map(m => m.name),
+    };
+  });
+}
+
+/** 站内通知：全部来自真实业务数据，无数据时为空数组（页面显示空态）。 */
+function buildNotifications({ reports = [], transactions = [], members = [], tasks = [], isEn = false }) {
+  const items = [];
+  const pending = reports.filter(r => r.status === '审核中');
+  if (pending.length) {
+    items.push({ icon: FileText, title: isEn ? 'Reports pending review' : '月报待审核', detail: isEn ? `${pending.length} report(s) awaiting review` : `${pending.slice(0, 2).map(r => r.team).join('、')}${pending.length > 2 ? ' 等' : ''} ${pending.length} 份月报待审核`, time: pending[0].submitted || '' });
+  }
+  const revision = reports.filter(r => r.status === '待修改');
+  if (revision.length) {
+    items.push({ icon: CircleAlert, title: isEn ? 'Reports returned' : '月报被退回', detail: isEn ? `${revision.length} report(s) need revision` : `${revision.map(r => r.team).join('、')} 需要修改后重新提交`, time: '' });
+  }
+  const latestTx = [...transactions].sort((a, b) => txNormalizeDate(b.date).localeCompare(txNormalizeDate(a.date)))[0];
+  if (latestTx) {
+    items.push({ icon: Coins, title: latestTx.points >= 0 ? (isEn ? 'Points credited' : '积分已到账') : (isEn ? 'Points adjusted' : '积分已调整'), detail: `${latestTx.member} · ${latestTx.source} ${latestTx.points > 0 ? '+' : ''}${latestTx.points}`, time: latestTx.date || '' });
+  }
+  const pendingLeave = members.filter(m => m.sync_state === 'pending_leave');
+  if (pendingLeave.length) {
+    items.push({ icon: ShieldCheck, title: isEn ? 'Pending leave confirmation' : '待确认离开', detail: isEn ? `${pendingLeave.length} member(s) removed from Feishu directory` : `${pendingLeave.slice(0, 3).map(m => m.name).join('、')} 已不在飞书通讯录，档案与积分仍保留`, time: '' });
+  }
+  const openTasks = tasks.filter(t => t.status === '待审核');
+  if (openTasks.length) {
+    items.push({ icon: CheckSquare, title: isEn ? 'Tasks awaiting review' : '任务待审核', detail: isEn ? `${openTasks.length} task(s) submitted` : `${openTasks.length} 项任务已提交，等待确认`, time: '' });
+  }
+  return items.slice(0, 5);
+}
+
 function LoginPage({ onLogin, language, setLanguage }) {
   const t = key => dictionaries[language]?.[key] ?? dictionaries.zh[key] ?? key;
   const isEn = language === 'en';
@@ -466,7 +551,7 @@ function MainApp({ session, onLogout, onSessionUpdate, language, setLanguage }) 
   const [tasks, setTasks] = useCloudState('tedx-hub-v2-tasks', 'tasks', initialTasks);
   const [reports, setReports] = useCloudState('tedx-hub-v2-reports', 'reports', initialReports);
   const [members, setMembers] = useCloudState('tedx-hub-v2-members', 'members', initialMembers);
-  const [teams] = useCloudState('tedx-hub-v2-teams', 'teams', initialTeams);
+  const [teams, setTeams] = useCloudState('tedx-hub-v2-teams', 'teams', initialTeams);
   const [transactions, setTransactions] = useCloudState('tedx-hub-v2-transactions', 'points_transactions', pointTransactions);
   const [reserves, setReserves] = useCloudState('tedx-hub-v2-reserves', 'reserve_volunteers', reserveVolunteers);
   const [modal, setModal] = useState(null);
@@ -495,6 +580,20 @@ function MainApp({ session, onLogout, onSessionUpdate, language, setLanguage }) 
     return () => { alive = false; };
   }, []);
   const pageMeta = getPageMeta(t);
+  // 全部展示用数据都由数据库真实记录推导，避免出现写死的示意数字。
+  const activeMembers = useMemo(() => members.filter(m => m.member_status === 'active'), [members]);
+  const teamView = useMemo(() => enrichTeams({ teams, members, tasks, reports, transactions }), [teams, members, tasks, reports, transactions]);
+  const monthlyTrend = useMemo(() => buildMonthlyTrend({ tasks, reports, transactions, isEn }), [tasks, reports, transactions, isEn]);
+  const notifications = useMemo(() => buildNotifications({ reports, transactions, members, tasks, isEn }), [reports, transactions, members, tasks, isEn]);
+  const reloadCloud = async () => {
+    try {
+      const [freshMembers, freshTeams] = await Promise.all([fetchTable('members'), fetchTable('teams')]);
+      if (freshMembers.length) setMembers(freshMembers);
+      if (freshTeams.length) setTeams(freshTeams);
+    } catch (err) {
+      console.warn('[Team Hub] 重新读取云端数据失败', err);
+    }
+  };
   const allowedPages = ROLE_PAGES[role] || ROLE_PAGES.member;
   const navGroups = getNavGroups(t).map(group => ({ ...group, items: group.items.filter(item => allowedPages.includes(item.id)) })).filter(group => group.items.length);
   if (role === 'admin' || role === 'leader') {
@@ -557,16 +656,16 @@ function MainApp({ session, onLogout, onSessionUpdate, language, setLanguage }) 
   const shared = { navigate, notify, setModal, exportCsv, t, language, isEn };
   let content;
   switch (activePage) {
-    case 'reports': content = <ReportsPage reports={reports} setReports={setReports} teams={teams} {...shared} />; break;
+    case 'reports': content = <ReportsPage reports={reports} setReports={setReports} teams={teamView} {...shared} />; break;
     case 'tasks': content = <TasksPage tasks={tasks} setTasks={setTasks} {...shared} />; break;
-    case 'teams': content = <TeamsPage teams={teams} {...shared} />; break;
-    case 'members': content = <MembersPage members={members} setMembers={setMembers} reserves={reserves} setReserves={setReserves} {...shared} />; break;
+    case 'teams': content = <TeamsPage teams={teamView} members={activeMembers} {...shared} />; break;
+    case 'members': content = <MembersPage members={members} setMembers={setMembers} teams={teams} reserves={reserves} setReserves={setReserves} transactions={transactions} tasks={tasks} {...shared} />; break;
     case 'myPoints': content = <MyPointsPage transactions={transactions} tasks={tasks} teams={teams} {...shared} />; break;
-    case 'pointsManagement': content = <PointsManagement transactions={transactions} setTransactions={setTransactions} members={members} {...shared} />; break;
-    case 'analytics': content = <AnalyticsPage teams={teams} {...shared} />; break;
+    case 'pointsManagement': content = <PointsManagement transactions={transactions} setTransactions={setTransactions} members={activeMembers} {...shared} />; break;
+    case 'analytics': content = <AnalyticsPage teams={teamView} monthlyTrend={monthlyTrend} transactions={transactions} tasks={tasks} members={activeMembers} {...shared} />; break;
     case 'hallAdmin': content = <HallAdmin notify={notify} lang={language} />; break;
-    case 'settings': content = <SettingsPage {...shared} session={session} role={role} orgSettings={orgSettings} onOrgSettings={setOrgSettings} onSessionUpdate={onSessionUpdate} language={language} teams={teams} members={members} tasks={tasks} reports={reports} transactions={transactions} reserves={reserves} />; break;
-    default: content = <Dashboard teams={teams} reports={reports} tasks={tasks} members={members} transactions={transactions} greeting={greetingText} greetingSub={greetingSubtitle(language)} {...shared} />;
+    case 'settings': content = <SettingsPage {...shared} session={session} role={role} orgSettings={orgSettings} onOrgSettings={setOrgSettings} onSessionUpdate={onSessionUpdate} language={language} teams={teamView} members={members} tasks={tasks} reports={reports} transactions={transactions} reserves={reserves} />; break;
+    default: content = <Dashboard teams={teamView} reports={reports} tasks={tasks} members={activeMembers} transactions={transactions} monthlyTrend={monthlyTrend} greeting={greetingText} greetingSub={greetingSubtitle(language)} {...shared} />;
   }
 
   return <LanguageContext.Provider value={language}><div className="app-shell">
@@ -598,15 +697,7 @@ function MainApp({ session, onLogout, onSessionUpdate, language, setLanguage }) 
         <div className="topbar-right">
           <div className="global-search"><Search size={17} /><input value={search} onChange={e => setSearch(e.target.value)} onFocus={() => setSearchFocus(true)} placeholder={t('searchPlaceholder')} /><kbd>⌘ K</kbd>{searchFocus && search && <div className="search-results">{searchResults.length ? searchResults.map((r, i) => <button key={i} onClick={() => { r.action(); setSearch(''); setSearchFocus(false); }}><span>{r.type}</span><div><strong>{r.title}</strong><small>{r.subtitle}</small></div><ChevronRight size={15} /></button>) : <div className="search-empty">{isEn ? `No results for “${search}”` : `没有找到“${search}”相关内容`}</div>}</div>}</div>
           <div className="language-switcher"><button className="language-button" onClick={() => { setLanguageOpen(!languageOpen); setNotificationsOpen(false); }}><Globe2 size={16} /><span>{isEn ? 'English' : '中文'}</span><ChevronDown size={13} /></button>{languageOpen && <div className="language-menu">{[['zh', '中文', '简体中文'], ['en', 'English', 'English interface']].map(([key, label, hint]) => <button key={key} onClick={() => { setLanguage(key); setLanguageOpen(false); notify(key === 'en' ? 'Interface language updated' : '界面语言已切换'); }}><div><strong>{label}</strong><small>{hint}</small></div>{language === key && <Check size={15} />}</button>)}</div>}</div>
-          <div className="notification-wrap"><button className="icon-button notification-button" onClick={() => { setNotificationsOpen(!notificationsOpen); setLanguageOpen(false); }}><Bell size={19} /><i /></button>{notificationsOpen && <div className="notifications-panel"><div className="notifications-title"><strong>{t('notifications')}</strong><button onClick={() => notify(isEn ? 'All notifications marked as read' : '已将所有通知标为已读')}>{t('markAllRead')}</button></div>{(isEn ? [
-            ['Report pending review', 'Brand Team submitted the November report', '10 min ago', FileText],
-            ['Points credited', 'You earned +5 task contribution points', 'Yesterday 18:32', Coins],
-            ['Reporting reminder', 'November reports are due in 6 days', 'Yesterday 09:00', Clock3],
-          ] : [
-            ['月报待审核', '品牌传播组已提交 11 月月报', '10 分钟前', FileText],
-            ['积分已到账', '你获得任务贡献积分 +5', '昨天 18:32', Coins],
-            ['填报提醒', '11 月月报将在 6 天后截止', '昨天 09:00', Clock3],
-          ]).map(([title, detail, time, Icon], i) => <div className="notification-item" key={i}><span><Icon size={17} /></span><div><strong>{title}</strong><p>{detail}</p><small>{time}</small></div></div>)}<button className="all-notifications" onClick={() => { setNotificationsOpen(false); notify(isEn ? 'All in-app notifications are shown' : '已展示全部站内通知'); }}>{t('viewAllNotifications')}<ChevronRight size={14} /></button></div>}</div>
+          <div className="notification-wrap"><button className="icon-button notification-button" onClick={() => { setNotificationsOpen(!notificationsOpen); setLanguageOpen(false); }}><Bell size={19} />{notifications.length > 0 && <i />}</button>{notificationsOpen && <div className="notifications-panel"><div className="notifications-title"><strong>{t('notifications')}</strong><button onClick={() => { setNotificationsOpen(false); notify(isEn ? 'All notifications marked as read' : '已将所有通知标为已读'); }}>{t('markAllRead')}</button></div>{notifications.length ? notifications.map((item, i) => <div className="notification-item" key={i}><span><item.icon size={17} /></span><div><strong>{item.title}</strong><p>{item.detail}</p>{item.time ? <small>{item.time}</small> : null}</div></div>) : <div className="search-empty">{isEn ? 'No notifications — all caught up.' : '暂无通知，一切正常。'}</div>}<button className="all-notifications" onClick={() => { setNotificationsOpen(false); notify(isEn ? 'All in-app notifications are shown' : '已展示全部站内通知'); }}>{t('viewAllNotifications')}<ChevronRight size={14} /></button></div>}</div>
           <Button icon={Plus} onClick={() => setModal({ type: 'newTask' })}>{t('newTask')}</Button>
         </div>
       </header>
@@ -625,7 +716,24 @@ function MainApp({ session, onLogout, onSessionUpdate, language, setLanguage }) 
       closeModal(); notify(submit ? '月报已提交，审核结果将通过站内通知告知' : '月报草稿已保存');
       if (submit) notifyFeishu('workload.submitted', { title: '月度工作量已提交', summary: '组长提交了本月团队月报，等待审核。', fields: [['团队', modal.data?.team || data.team || '—'], ['月份', modal.data?.month || data.month || '—'], ['任务数', data.tasks ?? modal.data?.tasks ?? 0], ['状态', '待审核']] });
     }} />}
-    {modal?.type === 'memberDetail' && <MemberDetail member={modal.data} onClose={closeModal} exportCsv={exportCsv} transactions={transactions} isEn={isEn} language={language} />}
+    {modal?.type === 'memberDetail' && (() => {
+      // 始终渲染最新的成员对象：编辑或飞书同步后，档案弹窗立即反映新数据。
+      const liveMember = members.find(m => m.id === modal.data.id) || modal.data;
+      return <MemberDetail
+        member={liveMember}
+        transactions={transactions}
+        tasks={tasks}
+        teams={teams}
+        isAdmin={role === 'admin'}
+        onClose={closeModal}
+        exportCsv={exportCsv}
+        notify={notify}
+        isEn={isEn}
+        language={language}
+        onUpdate={patch => setMembers(prev => prev.map(m => m.id === modal.data.id ? { ...m, ...patch } : m))}
+        onReload={async () => { await reloadCloud(); closeModal(); }}
+      />;
+    })()}
     {modal?.type === 'newMember' && <MemberForm onClose={closeModal} onSave={member => { setMembers(prev => [...prev, { ...member, id: Date.now(), points: 0, monthPoints: 0, tasks: 0, events: 0, status: '正常' }]); closeModal(); notify(`已邀请 ${member.name} 加入 Team Hub`); }} />}
     {modal?.type === 'reserveForm' && <ReserveForm isEn={isEn} onClose={closeModal} onSave={form => { setReserves(prev => [{ ...form, id: Date.now(), created: new Date().toLocaleDateString('zh-CN') }, ...prev]); closeModal(); notify(isEn ? 'Added to the reserve volunteer roster' : '已加入后备现场志愿者档案'); }} />}
     {modal?.type === 'pointsAdjust' && <PointsAdjust members={members} onClose={closeModal} onSave={tx => {
@@ -633,12 +741,15 @@ function MainApp({ session, onLogout, onSessionUpdate, language, setLanguage }) 
       closeModal(); notify('积分调整已入账，操作已记入审计日志');
       notifyFeishu('points.created', { title: '积分变动通知', summary: 'Team Hub 中记录了一条积分流水。', fields: [['成员', tx.member || '—'], ['所属团队', tx.team || '—'], ['积分变化', `${tx.points > 0 ? '+' : ''}${tx.points ?? 0}`], ['原因', tx.source || '—']] });
     }} />}
-    {modal?.type === 'teamDetail' && <TeamDetail team={modal.data} onClose={closeModal} navigate={navigate} />}
+    {modal?.type === 'teamDetail' && (() => {
+      const liveTeam = teamView.find(t => t.id === modal.data.id) || modal.data;
+      return <TeamDetail team={liveTeam} onClose={closeModal} navigate={navigate} reports={reports} tasks={tasks} members={activeMembers} isEn={isEn} />;
+    })()}
     {toast && <Toast message={toast} onClose={() => setToast('')} />}
   </div></LanguageContext.Provider>;
 }
 
-function Dashboard({ teams, reports, tasks, members, transactions, navigate, setModal, exportCsv, t, isEn, greeting, greetingSub }) {
+function Dashboard({ teams, reports, tasks, members, transactions, monthlyTrend = [], navigate, setModal, exportCsv, t, isEn, greeting, greetingSub }) {
   const [chartMetric, setChartMetric] = useState('workload');
   const [teamFilter, setTeamFilter] = useState('全部团队');
   const shownTeams = teamFilter === '全部团队' ? teams : teams.filter(team => team.status === teamFilter);
@@ -655,13 +766,25 @@ function Dashboard({ teams, reports, tasks, members, transactions, navigate, set
   const leadName = team => team.leader || (isEn ? 'To be assigned' : '待指定');
   const recent = tasks.slice(0, 3);
   const completion = team => team.tasks ? Math.round((Number(team.done) || 0) / team.tasks * 100) : 0;
+  // 趋势图与概览数字直接来自真实记录（任务工时 / 月报工时 / 积分流水）。
+  const trendData = monthlyTrend;
+  const metricTotal = trendData.reduce((sum, item) => sum + (Number(item[chartMetric]) || 0), 0);
+  const activeMonths = trendData.filter(item => Number(item[chartMetric]) > 0).length;
+  const monthlyAverage = activeMonths ? Math.round(metricTotal / activeMonths) : 0;
+  const nowMonth = new Date().getMonth() + 1;
+  const monthActiveCount = new Set(transactions.filter(tx => monthIndex(tx) === nowMonth).map(tx => tx.member).filter(Boolean)).size;
+  const hasTrendData = metricTotal > 0;
+  const nowDate = new Date();
+  const daysToDeadline = Math.max(0, Math.ceil((new Date(nowDate.getFullYear(), nowDate.getMonth() + 1, 1) - nowDate) / 86400000));
+  const reportCycleLabel = isEn ? `${nowDate.toLocaleDateString('en-US', { month: 'long' })} team reports are open` : `${nowDate.getMonth() + 1} 月团队月报填报中`;
+  const daysLeftLabel = isEn ? `${daysToDeadline} days until deadline` : `距截止还有 ${daysToDeadline} 天`;
 
   return <div className="page dashboard-page">
     <PageTitle title={greeting || t('goodMorning')} subtitle={greetingSub || t('goodMorningSub')} actions={<><button className="select-button"><CalendarDays size={16} />{t('year2026')}<ChevronDown size={14} /></button><Button variant="secondary" icon={Download} onClick={() => exportCsv(isEn ? 'Annual Team Data' : '年度团队数据')}>{t('exportData')}</Button></>} />
 
     <section className="deadline-banner">
       <div className="deadline-icon"><FileText size={22} /></div>
-      <div className="deadline-copy"><div><strong>{t('reportingOpen')}</strong><StatusBadge tone="red" dot={false}>{t('daysLeft')}</StatusBadge></div><p>{isEn ? `${submitted} of ${teamCount} reports submitted. ${notSubmitted} teams have not started yet.` : `已提交 ${submitted} / ${teamCount} 份月报，还有 ${notSubmitted} 个团队尚未完成填报。`}</p></div>
+      <div className="deadline-copy"><div><strong>{reportCycleLabel}</strong><StatusBadge tone="red" dot={false}>{daysLeftLabel}</StatusBadge></div><p>{isEn ? `${submitted} of ${teamCount} reports submitted. ${notSubmitted} teams have not started yet.` : `已提交 ${submitted} / ${teamCount} 份月报，还有 ${notSubmitted} 个团队尚未完成填报。`}</p></div>
       <div className="deadline-progress"><div><span>{t('submissionProgress')}</span><strong>{progress}%</strong></div><div className="progress-track"><i style={{ width: `${progress}%` }} /></div></div>
       <Button variant="secondary" onClick={() => navigate('reports')}>{t('viewReports')}<ChevronRight size={15} /></Button>
     </section>
@@ -670,7 +793,7 @@ function Dashboard({ teams, reports, tasks, members, transactions, navigate, set
       <MiniStat label={t('annualPoints')} value={totalPoints.toLocaleString()} suffix={isEn ? 'pts' : '分'} icon={Coins} note={isEn ? 'From credited transactions' : '来自已入账积分流水'} />
       <MiniStat label={t('activeMembers')} value={String(members.length)} suffix={isEn ? 'people' : '人'} icon={UsersRound} tone="blue" note={isEn ? 'Active curation team members' : '当前在编策展成员'} />
       <MiniStat label={t('monthlyTasks')} value={String(tasks.length)} suffix={isEn ? 'tasks' : '项'} icon={CheckSquare} tone="amber" note={isEn ? `${doneTasks} completed` : `已完成 ${doneTasks} 项`} />
-      <MiniStat label={t('monthlyActiveMembers')} value={String(members.length)} suffix={isEn ? 'people' : '人'} icon={Activity} tone="green" note={isEn ? 'Current roster' : '当前在编名册'} />
+      <MiniStat label={t('monthlyActiveMembers')} value={String(monthActiveCount)} suffix={isEn ? 'people' : '人'} icon={Activity} tone="green" note={isEn ? 'Members with points this month' : '本月产生积分记录的成员'} />
     </section>
 
     <section className="dashboard-main-grid">
@@ -691,7 +814,7 @@ function Dashboard({ teams, reports, tasks, members, transactions, navigate, set
     <section className="dashboard-chart-grid">
       <div className="card trend-card">
         <div className="card-header"><div><h2>{t('orgTrend')}</h2><p>{t('orgTrendSub')}</p></div><div className="segmented small"><button className={chartMetric === 'workload' ? 'active' : ''} onClick={() => setChartMetric('workload')}>{t('workload')}</button><button className={chartMetric === 'active' ? 'active' : ''} onClick={() => setChartMetric('active')}>{t('activePeople')}</button></div></div>
-        <div className="chart-summary"><strong>{chartMetric === 'workload' ? '4,406' : '48'}<small>{chartMetric === 'workload' ? (isEn ? ' hrs' : ' 小时') : (isEn ? ' people' : ' 人')}</small></strong><span className="trend-up"><ArrowUpRight size={14} />18.2%</span><span>{chartMetric === 'workload' ? (isEn ? 'Annual workload' : '年度累计工作量') : t('monthlyActiveMembers')}</span></div>
+        <div className="chart-summary"><strong>{metricTotal.toLocaleString()}<small>{chartMetric === 'workload' ? (isEn ? ' hrs' : ' 小时') : (isEn ? ' people' : ' 人')}</small></strong>{hasTrendData && <span className="trend-up"><TrendingUp size={14} />{isEn ? `avg ${monthlyAverage}` : `月均 ${monthlyAverage}`}</span>}<span>{hasTrendData ? (chartMetric === 'workload' ? (isEn ? 'Annual workload' : '年度累计工作量') : (isEn ? 'Participating people' : '参与人数累计')) : (isEn ? 'No records yet — data comes from tasks, reports and points' : '暂无记录 · 数据来自任务、月报与积分流水')}</span></div>
         <div className="area-chart"><ResponsiveContainer width="100%" height="100%"><AreaChart data={trendData} margin={{ top: 10, right: 8, left: -22, bottom: 0 }}><defs><linearGradient id="redArea" x1="0" y1="0" x2="0" y2="1"><stop offset="0%" stopColor="#e62b1e" stopOpacity={0.22} /><stop offset="95%" stopColor="#e62b1e" stopOpacity={0.01} /></linearGradient></defs><CartesianGrid vertical={false} stroke="#ececea" strokeDasharray="3 3" /><XAxis dataKey="month" axisLine={false} tickLine={false} tick={{ fill: '#92928e', fontSize: 11 }} dy={8} /><YAxis axisLine={false} tickLine={false} tick={{ fill: '#92928e', fontSize: 11 }} /><Tooltip content={<CustomTooltip unit={chartMetric === 'workload' ? 'h' : ''} />} /><Area type="monotone" dataKey={chartMetric} name={chartMetric === 'workload' ? t('workload') : t('activePeople')} stroke="#e62b1e" strokeWidth={2.5} fill="url(#redArea)" activeDot={{ r: 5, fill: '#e62b1e', stroke: '#fff', strokeWidth: 3 }} /></AreaChart></ResponsiveContainer></div>
       </div>
 
@@ -710,7 +833,9 @@ function Dashboard({ teams, reports, tasks, members, transactions, navigate, set
 
 function ReportsPage({ reports, setReports, teams, navigate, setModal, notify, exportCsv, t, isEn, language }) {
   const [filter, setFilter] = useState('全部');
-  const month = isEn ? 'November 2026' : '2026 年 11 月';
+  const now = new Date();
+  const month = isEn ? now.toLocaleDateString('en-US', { month: 'long', year: 'numeric' }) : `${now.getFullYear()} 年 ${now.getMonth() + 1} 月`;
+  const daysLeft = Math.max(0, Math.ceil((new Date(now.getFullYear(), now.getMonth() + 1, 1) - now) / 86400000));
   const filters = [['全部', t('all')], ['审核中', t('underReview')], ['已通过', t('approved')], ['待修改', t('revisionNeeded')], ['未提交', t('notSubmitted')]];
   const filtered = reports.filter(r => filter === '全部' || (filter === '未提交' ? ['未开始', '填写中'].includes(r.status) : r.status === filter));
   const teamCount = teams.length;
@@ -722,7 +847,7 @@ function ReportsPage({ reports, setReports, teams, navigate, setModal, notify, e
   const notSubmittedCount = Math.max(0, teamCount - reports.length);
   return <div className="page">
     <PageTitle title={t('reportsTitle')} subtitle={t('reportsSubtitle')} actions={<><Button variant="secondary" icon={Download} onClick={() => exportCsv(isEn ? 'Monthly Team Reports' : '月度团队报告')}>{t('exportReports')}</Button><Button icon={Plus} onClick={() => setModal({ type: 'reportEditor', data: reports.find(r => r.status === '填写中') })}>{t('fillMonthlyReport')}</Button></>} />
-    <div className="report-month-banner"><div className="month-calendar"><span>NOV</span><strong>11</strong></div><div><h3>{t('reportCycle')}</h3><p>{t('reportPeriod')}</p></div><div className="month-banner-stat"><span>{t('submitted')}</span><strong>{submittedCount}<small>{isEn ? ` / ${teamCount} teams` : ` / ${teamCount} 团队`}</small></strong></div><div className="month-banner-stat"><span>{t('daysUntilDeadline')}</span><strong>6<small>{isEn ? ' days' : ' 天'}</small></strong></div><Button variant="light" onClick={() => notify(isEn ? `Reminder sent to ${notSubmittedCount} team leads` : `填报提醒已发送给 ${notSubmittedCount} 位未提交组长`)}>{t('remindLeaders')}<Send size={15} /></Button></div>
+    <div className="report-month-banner"><div className="month-calendar"><span>{now.toLocaleDateString('en-US', { month: 'short' }).toUpperCase()}</span><strong>{String(now.getDate()).padStart(2, '0')}</strong></div><div><h3>{t('reportCycle')}</h3><p>{t('reportPeriod')}</p></div><div className="month-banner-stat"><span>{t('submitted')}</span><strong>{submittedCount}<small>{isEn ? ` / ${teamCount} teams` : ` / ${teamCount} 团队`}</small></strong></div><div className="month-banner-stat"><span>{t('daysUntilDeadline')}</span><strong>{daysLeft}<small>{isEn ? ' days' : ' 天'}</small></strong></div><Button variant="light" onClick={() => notify(isEn ? `Reminder sent to ${notSubmittedCount} team leads` : `填报提醒已发送给 ${notSubmittedCount} 位未提交组长`)}>{t('remindLeaders')}<Send size={15} /></Button></div>
     <div className="metrics-grid compact"><MiniStat label={t('pendingReports')} value={String(pendingCount)} suffix={isEn ? 'reports' : '份'} icon={ClipboardCheck} tone="amber" note={isEn ? 'Review within 3 working days' : '请在 3 个工作日内完成审核'} /><MiniStat label={t('approvedReports')} value={String(approvedCount)} suffix={isEn ? 'reports' : '份'} icon={CircleCheck} tone="green" note={isEn ? 'Approved this month' : '本月已通过'} /><MiniStat label={t('teamWorkload')} value={totalHours.toLocaleString()} suffix={isEn ? 'hrs' : '小时'} icon={Clock3} tone="blue" note={isEn ? 'From submitted reports' : '来自已提交月报'} /><MiniStat label={t('suggestedPoints')} value={String(totalPoints)} suffix={isEn ? 'pts' : '分'} icon={Coins} note={isEn ? 'Credited after approval' : '审核通过后自动入账'} /></div>
     <div className="card table-card">
       <div className="table-toolbar"><div className="filter-tabs">{filters.map(([key, label]) => <button key={key} className={filter === key ? 'active' : ''} onClick={() => setFilter(key)}>{label}<span>{key === '全部' ? reports.length : key === '未提交' ? reports.filter(r => ['未开始', '填写中'].includes(r.status)).length : reports.filter(r => r.status === key).length}</span></button>)}</div><div className="toolbar-right"><button className="select-button"><CalendarDays size={15} />{month}<ChevronDown size={14} /></button><button className="icon-button bordered"><Filter size={17} /></button></div></div>
@@ -745,12 +870,12 @@ function TasksPage({ tasks, setTasks, setModal, notify, t, isEn, language }) {
     <div className="card table-card">
       <div className="table-toolbar"><div className="local-search"><Search size={16} /><input placeholder={t('searchTasks')} value={query} onChange={e => setQuery(e.target.value)} /></div><div className="toolbar-right"><button className="select-button">{t('allTeams')}<ChevronDown size={14} /></button><button className="select-button">{isEn ? 'All Types' : '全部类型'}<ChevronDown size={14} /></button><div className="view-switch"><button className={view === 'list' ? 'active' : ''} onClick={() => setView('list')}><List size={17} /></button><button className={view === 'board' ? 'active' : ''} onClick={() => setView('board')}><LayoutGrid size={17} /></button></div></div></div>
       {view === 'list' ? <div className="table-wrap"><table className="data-table task-table"><thead><tr><th>{t('taskName')}</th><th>{t('assignedTeam')}</th><th>{t('collaborators')}</th><th>{t('dueDate')}</th><th>{t('priority')}</th><th>{t('progress')}</th><th>{t('status')}</th><th /></tr></thead><tbody>{filtered.map(task => <tr key={task.id}><td><div className="task-title-cell"><button className={`task-check ${task.status === '已完成' ? 'checked' : ''}`} onClick={() => updateStatus(task, task.status === '已完成' ? '进行中' : '已完成')}>{task.status === '已完成' && <Check size={13} />}</button><div><strong>{task.title}</strong><small>{task.project} · {task.type}</small></div></div></td><td>{task.team}</td><td><AvatarStack names={task.collaborators} /></td><td><span className={task.due.includes('08') && task.status !== '已完成' ? 'text-red' : ''}>{task.due}</span></td><td><StatusBadge tone={task.priority === '重要' ? 'red' : 'gray'} dot={false}>{task.priority}</StatusBadge></td><td><div className="task-progress"><div className="progress-track"><i style={{ width: `${task.progress}%` }} /></div><span>{task.progress}%</span></div></td><td><select className={`status-select ${statusTone[task.status] || 'gray'}`} value={task.status} onChange={e => updateStatus(task, e.target.value)}>{['未开始', '进行中', '待审核', '已完成', '暂停'].map(option => <option key={option} value={option}>{displayValue(option, language)}</option>)}</select></td><td><button className="icon-button"><MoreHorizontal size={17} /></button></td></tr>)}</tbody></table>{!filtered.length && <EmptyState title={isEn ? 'No tasks found' : '没有找到相关任务'} description={isEn ? 'Try another filter or keyword.' : '试试调整筛选条件或搜索关键词。'} />}</div> : <div className="kanban-board">{['未开始', '进行中', '待审核', '已完成'].map(status => <div className="kanban-column" key={status}><div className="kanban-title"><StatusBadge>{status}</StatusBadge><span>{tasks.filter(task => task.status === status).length}</span><Plus size={15} onClick={() => setModal({ type: 'newTask' })} /></div>{tasks.filter(task => task.status === status).map(task => <div className="kanban-card" key={task.id}><div className="kanban-card-top"><span>{task.type}</span><MoreHorizontal size={16} /></div><h3>{task.title}</h3><p>{task.project}</p><div className="progress-track"><i style={{ width: `${task.progress}%` }} /></div><div className="kanban-footer"><AvatarStack names={task.collaborators} /><span><CalendarDays size={13} />{task.due}</span></div></div>)}</div>)}</div>}
-      <div className="table-footer"><span>{isEn ? `${filtered.length} tasks shown · Updated just now` : `显示 ${filtered.length} 项任务 · 数据更新于刚刚`}</span><span>{isEn ? 'Completed tasks are included in monthly reports' : '已完成任务会自动计入对应月报'}</span></div>
+      <div className="table-footer"><span>{isEn ? `${filtered.length} tasks shown · Live data` : `显示 ${filtered.length} 项任务 · 实时数据`}</span><span>{isEn ? 'Completed tasks are included in monthly reports' : '已完成任务会自动计入对应月报'}</span></div>
     </div>
   </div>;
 }
 
-function TeamsPage({ teams, setModal, navigate, t, isEn }) {
+function TeamsPage({ teams, members = [], setModal, navigate, t, isEn }) {
   const totals = teams.reduce((acc, team) => ({
     members: acc.members + (Number(team.members) || 0),
     tasks: acc.tasks + (Number(team.tasks) || 0),
@@ -759,17 +884,40 @@ function TeamsPage({ teams, setModal, navigate, t, isEn }) {
   const leadName = team => team.leader || (isEn ? 'To be assigned' : '待指定');
   return <div className="page"><PageTitle title={t('teamsTitle')} subtitle={t('teamDirectorySub')} actions={<Button icon={Plus} onClick={() => navigate('members')}>{t('manageTeamsMembers')}</Button>} />
     <div className="team-summary-strip"><div><UsersRound size={20} /><span>{t('teamCount')}<strong>{teams.length}</strong></span></div><i /><div><Users size={20} /><span>{t('teamMembers')}<strong>{totals.members}</strong></span></div><i /><div><BriefcaseBusiness size={20} /><span>{t('monthlyTasks')}<strong>{totals.tasks}</strong></span></div><i /><div><Coins size={20} /><span>{t('annualPoints')}<strong>{totals.points.toLocaleString()}</strong></span></div></div>
-    <div className="teams-grid">{teams.map(team => <div className="team-card" key={team.id} onClick={() => setModal({ type: 'teamDetail', data: team })}><div className="team-card-accent" style={{ background: team.color }} /><div className="team-card-top"><span className="team-large-mark" style={{ background: `${team.color}14`, color: team.color }}>{team.short}</span><StatusBadge>{team.status}</StatusBadge></div><h2>{team.name}</h2><p>{team.description}</p><div className="team-leader"><Avatar name={leadName(team)} size="xs" /><span>{isEn ? `Lead · ${leadName(team)}` : `组长 · ${leadName(team)}`}</span><span>{team.members}{isEn ? ' members' : ' 位成员'}</span></div><div className="team-card-stats"><div><strong>{team.tasks}</strong><span>{t('monthlyTasks')}</span></div><div><strong>{team.done}<small>/{team.tasks}</small></strong><span>{t('completedTasks')}</span></div><div><strong>{team.points}</strong><span>{t('points')}</span></div></div><div className="team-card-footer"><AvatarStack names={team.avatars} max={4} /><button>{isEn ? 'View Team' : '查看团队'}<ArrowUpRight size={15} /></button></div></div>)}</div>
+    <div className="teams-grid">{teams.map(team => <div className="team-card" key={team.id} onClick={() => setModal({ type: 'teamDetail', data: team })}><div className="team-card-accent" style={{ background: team.color }} /><div className="team-card-top"><span className="team-large-mark" style={{ background: `${team.color}14`, color: team.color }}>{team.short}</span><StatusBadge>{team.status}</StatusBadge></div><h2>{team.name}</h2><p>{team.description}</p>{team.feishu_department_name ? <small className="team-dept-name">{isEn ? 'Feishu dept' : '飞书部门'} · {team.feishu_department_name}</small> : null}<div className="team-leader"><Avatar name={leadName(team)} size="xs" /><span>{isEn ? `Lead · ${leadName(team)}` : `组长 · ${leadName(team)}`}</span><span>{team.members}{isEn ? ' members' : ' 位成员'}</span></div><div className="team-card-stats"><div><strong>{team.tasks}</strong><span>{t('monthlyTasks')}</span></div><div><strong>{team.done}<small>/{team.tasks}</small></strong><span>{t('completedTasks')}</span></div><div><strong>{team.points}</strong><span>{t('points')}</span></div></div><div className="team-card-footer"><AvatarStack names={team.avatars} max={4} /><button>{isEn ? 'View Team' : '查看团队'}<ArrowUpRight size={15} /></button></div></div>)}</div>
   </div>;
 }
 
-function MembersPage({ members, setMembers, reserves, setReserves, setModal, exportCsv, notify, navigate, t, isEn, language }) {
+function MembersPage({ members, setMembers, teams = [], reserves, setReserves, setModal, exportCsv, notify, navigate, transactions = [], tasks = [], t, isEn, language }) {
   const L = (zh, en) => isEn ? en : zh;
   const [tab, setTab] = useState('active');
   const [query, setQuery] = useState('');
   const [status, setStatus] = useState('全部成员');
   const [reserveQuery, setReserveQuery] = useState('');
   const [availability, setAvailability] = useState('全部');
+  // 积分与任务数按真实流水 / 任务实时统计，不再依赖 members 表里的静态列。
+  const monthNow = new Date().getMonth() + 1;
+  const statsByName = useMemo(() => {
+    const map = new Map();
+    const get = name => {
+      if (!map.has(name)) map.set(name, { points: 0, monthPoints: 0, tasks: 0 });
+      return map.get(name);
+    };
+    transactions.forEach(tx => {
+      if (!tx.member) return;
+      const row = get(tx.member);
+      const pts = Number(tx.points) || 0;
+      row.points += pts;
+      if (monthIndex(tx) === monthNow) row.monthPoints += pts;
+    });
+    tasks.forEach(task => {
+      if (!task.owner) return;
+      if (task.status !== '已完成') return;
+      get(task.owner).tasks += 1;
+    });
+    return map;
+  }, [transactions, tasks, monthNow]);
+  const statOf = name => statsByName.get(name) || { points: 0, monthPoints: 0, tasks: 0 };
   const activeMembers = members.filter(m => m.member_status === 'active');
   const alumniMembers = members.filter(m => m.member_status !== 'active');
   const filtered = activeMembers.filter(m => `${m.name}${m.english || ''}${m.team || ''}`.toLowerCase().includes(query.toLowerCase()) && (status === '全部成员' || m.status === status));
@@ -797,7 +945,7 @@ function MembersPage({ members, setMembers, reserves, setReserves, setModal, exp
 
     {tab === 'active' ? <>
       <div className="member-insights"><div><span className="metric-icon red"><Users size={20} /></span><div><strong>{activeMembers.length}</strong><p>{t('memberCount')}</p></div><small>{L('当前在编名册', 'Current roster')}</small></div><div><span className="metric-icon green"><Activity size={20} /></span><div><strong>{participation}%</strong><p>{t('participationRate')}</p></div><small>{activeCount} {L('位活跃成员', 'active members')}</small></div><div><span className="metric-icon blue"><History size={20} /></span><div><strong>{alumniMembers.length}</strong><p>{L('历届成员归档', 'Alumni Archived')}</p></div><small>{L('已存档至十周年纪念馆', 'Archived in Hall of Honor')}</small></div></div>
-      <div className="card table-card"><div className="table-toolbar"><div className="filter-tabs">{memberFilters.map(([key, label]) => <button className={status === key ? 'active' : ''} onClick={() => setStatus(key)} key={key}>{label}</button>)}</div><div className="toolbar-right"><div className="local-search"><Search size={16} /><input placeholder={t('searchMembers')} value={query} onChange={e => setQuery(e.target.value)} /></div><button className="icon-button bordered"><SlidersHorizontal size={17} /></button></div></div><div className="table-wrap"><table className="data-table member-table"><thead><tr><th>{t('member')}</th><th>{t('assignedTeam')}</th><th>{t('role')}</th><th>{t('joinedAt')}</th><th>{t('annualTasks')}</th><th>{t('points')}</th><th>{t('participationStatus')}</th><th /></tr></thead><tbody>{filtered.map(m => <tr key={m.id} onClick={() => setModal({ type: 'memberDetail', data: m })}><td><div className="member-cell"><Avatar name={m.name} src={m.avatar} /><div><strong>{m.name}<span>{m.english}</span></strong><small>{m.email}</small></div></div></td><td>{m.team}</td><td><span className={m.role === '组长' ? 'role-tag leader' : 'role-tag'}>{displayValue(m.role, language)}</span></td><td className="muted">{m.joined}</td><td>{m.tasks} {isEn ? 'tasks' : '项'}</td><td><strong className="points-number">{m.points}</strong><span className="table-sub"> {isEn ? 'pts' : '分'}</span><small className="points-month">{isEn ? `This month +${m.monthPoints}` : `本月 +${m.monthPoints}`}</small></td><td><StatusBadge>{m.status}</StatusBadge></td><td><ChevronRight size={16} className="muted" /></td></tr>)}</tbody></table>{!filtered.length && <EmptyState title={isEn ? 'No active members yet' : '暂无在编成员'} description={isEn ? 'Add members to build the curation team roster.' : '点击右上角「添加成员」建立本年度策展团队名册。'} />}</div><div className="table-footer"><span>{isEn ? `${filtered.length} active members` : `显示 ${filtered.length} 位在编成员`}</span></div></div>
+      <div className="card table-card"><div className="table-toolbar"><div className="filter-tabs">{memberFilters.map(([key, label]) => <button className={status === key ? 'active' : ''} onClick={() => setStatus(key)} key={key}>{label}</button>)}</div><div className="toolbar-right"><div className="local-search"><Search size={16} /><input placeholder={t('searchMembers')} value={query} onChange={e => setQuery(e.target.value)} /></div><button className="icon-button bordered"><SlidersHorizontal size={17} /></button></div></div><div className="table-wrap"><table className="data-table member-table"><thead><tr><th>{t('member')}</th><th>{t('assignedTeam')}</th><th>{t('role')}</th><th>{t('joinedAt')}</th><th>{t('annualTasks')}</th><th>{t('points')}</th><th>{t('participationStatus')}</th><th /></tr></thead><tbody>{filtered.map(m => <tr key={m.id} onClick={() => setModal({ type: 'memberDetail', data: m })}><td><div className="member-cell"><Avatar name={m.name} src={m.avatar} /><div><strong>{m.name}<span>{m.english}</span></strong><small>{m.email}</small></div></div></td><td>{m.team}</td><td><span className={m.role === '组长' ? 'role-tag leader' : 'role-tag'}>{displayValue(m.role, language)}</span></td><td className="muted">{m.joined}</td><td>{statOf(m.name).tasks} {isEn ? 'tasks' : '项'}</td><td><strong className="points-number">{statOf(m.name).points}</strong><span className="table-sub"> {isEn ? 'pts' : '分'}</span><small className="points-month">{isEn ? `This month +${statOf(m.name).monthPoints}` : `本月 +${statOf(m.name).monthPoints}`}</small></td><td><StatusBadge>{m.status}</StatusBadge></td><td><ChevronRight size={16} className="muted" /></td></tr>)}</tbody></table>{!filtered.length && <EmptyState title={isEn ? 'No active members yet' : '暂无在编成员'} description={isEn ? 'Add members to build the curation team roster.' : '点击右上角「添加成员」建立本年度策展团队名册。'} />}</div><div className="table-footer"><span>{isEn ? `${filtered.length} active members` : `显示 ${filtered.length} 位在编成员`}</span></div></div>
     </> : tab === 'alumni' ? <>
       <section className="card reserve-intro"><div className="settings-title"><span><History size={19} /></span><div><h2>{L('历届成员归档', 'Alumni Archive')}</h2><p>{L('过往策展团队成员，已存档至十周年纪念馆', 'Former curation team members, archived in the Hall of Honor')}</p></div></div>
         <p className="greeting-hint"><Info size={15} /><span>{L('这些成员已标记为「历届」，不再计入本年度在编名册、团队编制与积分排名；其历史贡献已永久保存在十周年纪念馆（公开页 /hall-of-honor），不会被删除。', 'These members are marked as alumni — excluded from the active roster, team headcount and points rankings — but their historical contributions are preserved permanently in the Hall of Honor (public page /hall-of-honor).')}</span></p>
@@ -851,45 +999,72 @@ function MyPointsPage({ transactions, tasks, teams, navigate, exportCsv, t, isEn
     .map(([zh, en, color]) => ({ zh, en, color, value: byType[zh] || 0, percent: totalPoints ? Math.round((byType[zh] || 0) / totalPoints * 100) : 0 }));
   return <div className="page"><PageTitle title={t('myPointsTitle')} subtitle={t('myPointsSubtitle')} actions={<Button variant="secondary" icon={Download} onClick={() => exportCsv(isEn ? 'Personal Point Transactions' : '个人积分流水')}>{t('exportContribution')}</Button>} />
     <section className="points-hero"><div className="points-hero-main"><img className="points-hero-logo" src="/assets/logo-white.png" alt="TEDxZizhuPark" /><span>{isEn ? '2026 Annual Points' : '2026 年度累计积分'}</span><div><strong>{totalPoints}</strong><small>{isEn ? 'pts' : '分'}</small></div><p><span><ArrowUpRight size={14} />{isEn ? `${totalPoints} pts recorded` : `已记录 ${totalPoints} 分`}</span>{isEn ? 'Points are a record, not a ranking' : '积分是记录，不是排名'}</p></div><div className="points-hero-stats"><div><span>{isEn ? 'Lifetime Points' : '历史累计积分'}</span><strong>{totalPoints}<small>{isEn ? ' pts' : ' 分'}</small></strong></div><div><span>{isEn ? 'Annual Rank' : '年度组织排名'}</span><strong>—<small></small></strong></div><div><span>{isEn ? 'Consecutive Participation' : '连续参与'}</span><strong>—<small></small></strong></div></div></section>
-    <div className="points-content-grid"><div className="card points-breakdown"><div className="card-header"><div><h2>{t('pointsStructure')}</h2><p>{t('pointsStructureSub')}</p></div></div><div className="points-donut-row"><div className="points-donut"><div><strong>{totalPoints}</strong><span>{isEn ? 'Total Points' : '总积分'}</span></div></div><div className="points-legend">{legend.map(item => <div key={item.zh}><i style={{ background: item.color }} /><span>{isEn ? item.en : item.zh}</span><strong>{item.value} {isEn ? 'pts' : '分'}</strong><small>{item.percent}%</small></div>)}</div></div><div className="points-quote"><Sparkles size={18} /><p>{isEn ? 'Points record your contribution, not your total value.' : '积分是组织对你付出的记录，而不是对你价值的唯一评价。'}</p></div></div><div className="card contribution-card"><div className="card-header"><div><h2>{t('myAnnualContribution')}</h2><p>{t('myAnnualContributionSub')}</p></div></div><div className="contribution-grid"><div><CheckSquare size={18} /><strong>{tasks.length}</strong><span>{t('completedTasks')}</span></div><div><CalendarDays size={18} /><strong>{transactions.length}</strong><span>{t('attendedActivities')}</span></div><div><UsersRound size={18} /><strong>{teams.length}</strong><span>{t('crossTeamCollaboration')}</span></div><div><Star size={18} /><strong>{byType['特别贡献'] || 0}</strong><span>{t('specialContributions')}</span></div></div><button className="full-secondary-button" onClick={() => navigate('analytics')}>{t('viewContributionReport')}<ArrowUpRight size={15} /></button></div></div>
+    <div className="points-content-grid"><div className="card points-breakdown"><div className="card-header"><div><h2>{t('pointsStructure')}</h2><p>{t('pointsStructureSub')}</p></div></div><div className="points-donut-row"><div className="points-donut"><div><strong>{totalPoints}</strong><span>{isEn ? 'Total Points' : '总积分'}</span></div></div><div className="points-legend">{legend.map(item => <div key={item.zh}><i style={{ background: item.color }} /><span>{isEn ? item.en : item.zh}</span><strong>{item.value} {isEn ? 'pts' : '分'}</strong><small>{item.percent}%</small></div>)}</div></div><div className="points-quote"><Sparkles size={18} /><p>{isEn ? 'Points record your contribution, not your total value.' : '积分是组织对你付出的记录，而不是对你价值的唯一评价。'}</p></div></div><div className="card contribution-card"><div className="card-header"><div><h2>{t('myAnnualContribution')}</h2><p>{t('myAnnualContributionSub')}</p></div></div><div className="contribution-grid"><div><CheckSquare size={18} /><strong>{tasks.length}</strong><span>{t('completedTasks')}</span></div><div><CalendarDays size={18} /><strong>{transactions.length}</strong><span>{t('attendedActivities')}</span></div><div><UsersRound size={18} /><strong>{new Set(transactions.map(tx => tx.team).filter(Boolean)).size}</strong><span>{t('crossTeamCollaboration')}</span></div><div><Star size={18} /><strong>{byType['特别贡献'] || 0}</strong><span>{t('specialContributions')}</span></div></div><button className="full-secondary-button" onClick={() => navigate('analytics')}>{t('viewContributionReport')}<ArrowUpRight size={15} /></button></div></div>
     <div className="card table-card"><div className="card-header padded"><div><h2>{t('pointsDetails')}</h2><p>{t('pointsDetailsSub')}</p></div><button className="select-button">{t('year2026')}<ChevronDown size={14} /></button></div><div className="table-wrap"><table className="data-table"><thead><tr><th>{t('pointsSource')}</th><th>{t('pointsType')}</th><th>{t('assignedTeam')}</th><th>{t('time')}</th><th>{t('reviewStatus')}</th><th>{t('points')}</th></tr></thead><tbody>{myTx.map(tx => <tr key={tx.id}><td><strong>{tx.source}</strong><small className="transaction-id">{tx.id}</small></td><td><StatusBadge>{tx.type}</StatusBadge></td><td>{tx.team}</td><td className="muted">{tx.date}</td><td><StatusBadge>{tx.status}</StatusBadge></td><td><strong className={tx.points >= 0 ? 'positive-points' : 'negative-points'}>{tx.points > 0 ? '+' : ''}{tx.points}</strong></td></tr>)}</tbody></table></div></div>
   </div>;
 }
 
-function PointsManagement({ transactions, setTransactions, members, setModal, exportCsv, notify, t, isEn, language }) {
+function PointsManagement({ transactions, setTransactions, members, setModal, exportCsv, notify, navigate, t, isEn, language }) {
   const [tab, setTab] = useState('积分流水');
   const totalPoints = transactions.reduce((sum, tx) => sum + (Number(tx.points) || 0), 0);
   const pendingPoints = transactions.filter(tx => tx.status === '待审核').reduce((sum, tx) => sum + (Number(tx.points) || 0), 0);
   const averagePoints = transactions.length ? (totalPoints / transactions.length).toFixed(1) : '0';
   const ranked = [...members].sort((a, b) => (Number(b.points) || 0) - (Number(a.points) || 0)).slice(0, 3);
-  const rules = [['参加正式团队例会', '基础参与', '+2', '每次'], ['参加专项培训', '基础参与', '+2', '每次'], ['完成普通任务', '任务贡献', '+3', '每项'], ['完成重要任务', '任务贡献', '+5', '每项'], ['完成重大项目交付', '任务贡献', '+10', '每项'], ['跨组协作并完成交付', '组织贡献', '+3', '每次'], ['参与活动现场执行', '任务贡献', '+5', '每次'], ['组织一次有效社区活动', '社区贡献', '+5', '每次']];
+  // 积分规则来自云端 points_rules 表（与系统设置页同一数据源），不再使用写死的示例规则。
+  const [rules, setRules] = useState([]);
+  useEffect(() => {
+    let alive = true;
+    fetchTable('points_rules').then(rows => { if (alive) setRules(rows); }).catch(() => {});
+    return () => { alive = false; };
+  }, []);
   const tabs = [['积分流水', t('pointTransactions')], ['积分规则', t('pointsRules')], ['排行榜', t('leaderboard')]];
-  return <div className="page"><PageTitle title={t('pointsManagementTitle')} subtitle={t('pointsManagementSubtitle')} actions={<><Button variant="secondary" icon={SlidersHorizontal} onClick={() => notify(isEn ? 'Points rules are now in edit mode' : '积分规则已进入编辑模式')}>{t('ruleSettings')}</Button><Button icon={Plus} onClick={() => setModal({ type: 'pointsAdjust' })}>{t('adjustPoints')}</Button></>} />
+  return <div className="page"><PageTitle title={t('pointsManagementTitle')} subtitle={t('pointsManagementSubtitle')} actions={<><Button variant="secondary" icon={SlidersHorizontal} onClick={() => navigate('settings')}>{t('ruleSettings')}</Button><Button icon={Plus} onClick={() => setModal({ type: 'pointsAdjust' })}>{t('adjustPoints')}</Button></>} />
     <div className="metrics-grid compact"><MiniStat label={t('annualDistributed')} value={totalPoints.toLocaleString()} suffix={isEn ? 'pts' : '分'} icon={Coins} note={isEn ? 'From credited transactions' : '来自已入账流水'} /><MiniStat label={t('monthlyDistributed')} value={String(transactions.length)} suffix={isEn ? 'records' : '条'} icon={CircleCheck} tone="green" note={isEn ? 'Total transactions' : '积分流水总数'} /><MiniStat label={t('pointsPendingReview')} value={String(pendingPoints)} suffix={isEn ? 'pts' : '分'} icon={Clock3} tone="amber" note={isEn ? 'Awaiting review' : '等待管理员审核'} /><MiniStat label={t('averageAnnualPoints')} value={averagePoints} suffix={isEn ? 'pts' : '分'} icon={TrendingUp} tone="blue" note={isEn ? 'Average per transaction' : '每条流水平均积分'} /></div>
     <div className="card table-card"><div className="table-toolbar"><div className="filter-tabs">{tabs.map(([key, label]) => <button key={key} className={tab === key ? 'active' : ''} onClick={() => setTab(key)}>{label}</button>)}</div>{tab === '积分流水' && <div className="toolbar-right"><button className="select-button"><CalendarDays size={15} />{t('year2026')}<ChevronDown size={14} /></button><Button variant="secondary" icon={Download} onClick={() => exportCsv(isEn ? 'Point Transactions' : '积分流水')}>{isEn ? 'Export Transactions' : '导出流水'}</Button></div>}</div>
       {tab === '积分流水' && <><div className="table-wrap"><table className="data-table"><thead><tr><th>{t('member')}</th><th>{t('pointsSource')}</th><th>{t('pointsType')}</th><th>{t('points')}</th><th>{t('time')}</th><th>{t('status')}</th><th /></tr></thead><tbody>{transactions.map(tx => <tr key={tx.id}><td><div className="simple-person"><Avatar name={tx.member} size="xs" /><strong>{tx.member}</strong></div></td><td><strong>{tx.source}</strong><small className="transaction-id">{tx.id} · {tx.team}</small></td><td><StatusBadge>{tx.type}</StatusBadge></td><td><strong className={tx.points >= 0 ? 'positive-points' : 'negative-points'}>{tx.points > 0 ? '+' : ''}{tx.points}</strong></td><td className="muted">{tx.date}</td><td><StatusBadge>{tx.status}</StatusBadge></td><td><button className="icon-button"><Eye size={16} /></button></td></tr>)}</tbody></table></div><div className="table-footer"><span><LockKeyhole size={13} />{isEn ? 'Transactions cannot be deleted; use reversing adjustments' : '积分流水不可删除，仅支持反向调整'}</span><span>{isEn ? `${transactions.length} recent records` : `共 ${transactions.length} 条近期记录`}</span></div></>}
-      {tab === '积分规则' && <div className="rules-content"><div className="rules-note"><Info size={17} /><span>{isEn ? 'Rules calculate suggested report points. Changes only affect future records.' : '以下规则用于自动计算月报建议积分。修改规则仅影响之后的记录，不会追溯调整历史积分。'}</span><Button variant="secondary" onClick={() => notify(isEn ? 'Rule version V1.3 saved' : '规则版本已保存为 V1.3')}>{isEn ? 'Save New Version' : '保存新版本'}</Button></div><table className="data-table"><thead><tr><th>{t('contributionAction')}</th><th>{t('pointsType')}</th><th>{t('defaultPoints')}</th><th>{t('scoringUnit')}</th><th>{t('enabled')}</th></tr></thead><tbody>{rules.map((rule, index) => <tr key={index}><td><strong>{rule[0]}</strong></td><td><StatusBadge tone={index < 2 ? 'green' : index < 4 || index === 6 ? 'blue' : 'amber'}>{rule[1]}</StatusBadge></td><td><strong className="positive-points">{rule[2]}</strong></td><td>{isEn ? 'Each time' : rule[3]}</td><td><span className="toggle on"><i /></span></td></tr>)}</tbody></table></div>}
+      {tab === '积分规则' && <div className="rules-content"><div className="rules-note"><Info size={17} /><span>{isEn ? 'Rules calculate suggested report points. Changes only affect future records.' : '以下规则用于自动计算月报建议积分。修改规则仅影响之后的记录，不会追溯调整历史积分。'}</span><Button variant="secondary" onClick={() => navigate('settings')}>{isEn ? 'Edit in Settings' : '去系统设置中编辑'}</Button></div>{rules.length ? <table className="data-table"><thead><tr><th>{t('contributionAction')}</th><th>{t('pointsType')}</th><th>{t('defaultPoints')}</th><th>{t('scoringUnit')}</th><th>{t('enabled')}</th></tr></thead><tbody>{rules.map(rule => <tr key={rule.id}><td><strong>{rule.action}</strong></td><td><StatusBadge>{rule.type}</StatusBadge></td><td><strong className="positive-points">{Number(rule.points) > 0 ? `+${rule.points}` : rule.points}</strong></td><td>{rule.unit || '—'}</td><td><span className={`toggle ${rule.enabled === false ? '' : 'on'}`}><i /></span></td></tr>)}</tbody></table> : <EmptyState title={isEn ? 'No points rules yet' : '尚未配置积分规则'} description={isEn ? 'Add rules in Settings → Points rules.' : '在「系统设置 → 积分规则」中新增规则后，这里会显示真实配置。'} />}</div>}
       {tab === '排行榜' && <div className="ranking-content"><div className="ranking-note"><Info size={16} />{isEn ? 'The leaderboard recognizes contribution and is not the only measure of member value. Admins can control visibility in settings.' : '排行榜用于认可贡献，不作为成员价值的唯一评价标准。管理员可在系统设置中控制展示范围。'}</div>{ranked.length ? <div className="podium">{ranked.map((member, index) => <div className={`podium-item place-${index + 1}`} key={member.id}><div className="podium-avatar"><Avatar name={member.name} src={member.avatar} /><span>{index + 1}</span></div><strong>{member.name}</strong><small>{member.team}</small><b>{member.points}<em>{isEn ? 'pts' : '分'}</em></b><div style={{ height: `${[112, 142, 92][index]}px` }} /></div>)}</div> : <EmptyState title={isEn ? 'No rankings yet' : '暂无积分排名'} description={isEn ? 'Rankings appear once members earn points.' : '成员产生积分后，这里会显示排行榜。'} />}</div>}
     </div>
   </div>;
 }
 
-function AnalyticsPage({ teams, exportCsv, t, isEn, language }) {
+function AnalyticsPage({ teams, monthlyTrend = [], transactions = [], tasks = [], members = [], exportCsv, t, isEn, language }) {
   const [dimension, setDimension] = useState('团队工作量');
   const teamChart = teams.slice(0, 7).map(team => ({ name: team.short, value: team.workload, points: team.points, color: team.color }));
-  const pieData = [{ name: '任务贡献', value: 48, color: '#e62b1e' }, { name: '基础参与', value: 22, color: '#f2b84b' }, { name: '组织贡献', value: 17, color: '#4d6fb3' }, { name: '特别贡献', value: 13, color: '#6a9b82' }];
+  const TYPE_COLORS = { '任务贡献': '#e62b1e', '基础参与': '#f2b84b', '组织贡献': '#4d6fb3', '特别贡献': '#6a9b82', '社区贡献': '#7c3aed' };
   const totals = teams.reduce((acc, team) => ({
     tasks: acc.tasks + (Number(team.tasks) || 0),
     done: acc.done + (Number(team.done) || 0),
     active: acc.active + (Number(team.active) || 0),
   }), { tasks: 0, done: 0, active: 0 });
+
+  // 积分分布：按真实积分流水的类型汇总（没有流水时不画假比例）
+  const typeTotals = transactions.reduce((acc, tx) => {
+    const key = tx.type || '其他';
+    acc[key] = (acc[key] || 0) + Math.max(0, Number(tx.points) || 0);
+    return acc;
+  }, {});
+  const typeSum = Object.values(typeTotals).reduce((sum, value) => sum + value, 0);
+  const pieData = Object.entries(typeTotals).filter(([, value]) => value > 0).map(([name, value]) => ({ name, value, color: TYPE_COLORS[name] || '#c9c9c3' }));
+
+  // 年度参与率：本年度有任务或积分记录的成员 / 在编成员
+  const participated = new Set([
+    ...transactions.map(tx => tx.member),
+    ...tasks.map(task => task.owner),
+    ...tasks.flatMap(task => task.collaborators || []),
+  ].filter(Boolean)).size;
+  const participationRate = members.length ? Math.round(Math.min(participated, members.length) / members.length * 100) : 0;
+  const maxActive = Math.max(1, ...monthlyTrend.map(item => Number(item.active) || 0));
+  const hasMonthlyData = monthlyTrend.some(item => Number(item.active) || Number(item.workload) || Number(item.points));
+  const lastUpdated = new Date().toLocaleDateString(isEn ? 'en-US' : 'zh-CN', { month: 'long', day: 'numeric' });
+
   const summaryItems = isEn
-    ? [['Total Annual Tasks', String(totals.tasks), '', 'From team records'], ['Tasks Completed', String(totals.done), '', 'Completion rate'], ['Average Monthly Active Members', String(totals.active), '', 'Active roster'], ['Cross-team Collaboration', '0', 'times', `${teams.length} teams`], ['Events Held', '0', '', 'This year']]
-    : [['年度总任务数', String(totals.tasks), '项', '来自团队记录'], ['已完成任务', String(totals.done), '项', '任务完成情况'], ['月度平均活跃人数', String(totals.active), '人', '当前活跃名册'], ['跨团队协作', '0', '次', `${teams.length} 个团队`], ['累计活动场次', '0', '场', '本年度']];
+    ? [['Total Annual Tasks', String(totals.tasks), '', 'From task records'], ['Tasks Completed', String(totals.done), '', `${totals.tasks ? Math.round(totals.done / totals.tasks * 100) : 0}% completion`], ['Active Roster', String(members.length), '', 'Members marked active'], ['Members Participated', String(participated), '', 'Tasks or points this year'], ['Points Credited', String(typeSum), 'pts', 'From points transactions']]
+    : [['年度总任务数', String(totals.tasks), '项', '来自任务记录'], ['已完成任务', String(totals.done), '项', `完成率 ${totals.tasks ? Math.round(totals.done / totals.tasks * 100) : 0}%`], ['在编成员', String(members.length), '人', '成员档案中标为在编'], ['有参与记录成员', String(participated), '人', '本年度有任务或积分'], ['已入账积分', String(typeSum), '分', '来自积分流水']];
   return <div className="page"><PageTitle title={t('analyticsTitle')} subtitle={t('analyticsSubtitle')} actions={<><button className="select-button"><CalendarDays size={15} />{t('year2026')}<ChevronDown size={14} /></button><Button variant="secondary" icon={FileSpreadsheet} onClick={() => exportCsv(isEn ? 'Annual Analytics' : '年度统计分析')}>{t('exportReport')}</Button></>} />
-    <div className="analytics-highlight"><div><span>{t('participationRateAnnual')}</span><strong>78.4%</strong><p><span className="trend-up"><ArrowUpRight size={13} />8.6%</span>{isEn ? 'Continued growth from 2025' : '较 2025 年度持续提升'}</p></div><div className="participation-bars">{trendData.slice(3).map((item, index) => <div key={index}><span style={{ height: `${item.active / 60 * 100}%` }} /><small>{item.month}</small></div>)}</div><div className="highlight-side"><span>{t('annualResults')}</span><strong>326<small>{isEn ? ' items' : ' 项'}</small></strong><p>{isEn ? `${teams.length} teams · ${teams.length} active groups` : `涵盖 ${teams.length} 个团队`}</p></div></div>
-    <div className="analytics-grid"><div className="card analytics-bar-card"><div className="card-header"><div><h2>{t('teamComparison')}</h2><p>{t('teamComparisonSub')}</p></div><div className="segmented small"><button className={dimension === '团队工作量' ? 'active' : ''} onClick={() => setDimension('团队工作量')}>{t('workload')}</button><button className={dimension === '团队积分' ? 'active' : ''} onClick={() => setDimension('团队积分')}>{t('teamPoints')}</button></div></div><div className="bar-chart-large"><ResponsiveContainer width="100%" height="100%"><BarChart data={teamChart} margin={{ top: 15, right: 5, left: -22, bottom: 0 }}><CartesianGrid vertical={false} stroke="#ececea" strokeDasharray="3 3" /><XAxis dataKey="name" axisLine={false} tickLine={false} tick={{ fontSize: 12, fill: '#777772' }} /><YAxis axisLine={false} tickLine={false} tick={{ fontSize: 11, fill: '#999994' }} /><Tooltip content={<CustomTooltip />} /><Bar dataKey={dimension === '团队积分' ? 'points' : 'value'} name={dimension === '团队积分' ? t('teamPoints') : t('workload')} radius={[5, 5, 0, 0]} maxBarSize={40}>{teamChart.map((entry, index) => <Cell key={index} fill={index === 0 ? '#e62b1e' : '#deded9'} />)}</Bar></BarChart></ResponsiveContainer></div></div><div className="card points-distribution"><div className="card-header"><div><h2>{t('pointsDistribution')}</h2><p>{t('pointsDistributionSub')}</p></div></div><div className="distribution-chart"><ResponsiveContainer width="100%" height="100%"><PieChart><Pie data={pieData} dataKey="value" innerRadius={58} outerRadius={82} paddingAngle={4} stroke="none">{pieData.map((entry, index) => <Cell key={index} fill={entry.color} />)}</Pie><Tooltip /></PieChart></ResponsiveContainer><div><strong>2,846</strong><span>{t('annualPoints')}</span></div></div><div className="distribution-legend">{pieData.map(item => <div key={item.name}><i style={{ background: item.color }} /><span>{displayValue(item.name, language)}</span><strong>{item.value}%</strong></div>)}</div></div></div>
-    <div className="card annual-summary"><div className="card-header"><div><h2>{t('annualSummary')}</h2><p>{t('annualSummarySub')}</p></div><span className="updated-time"><CircleCheck size={14} />{isEn ? 'Updated Nov 9' : '数据更新至 11月9日'}</span></div><div className="annual-summary-grid">{summaryItems.map(([label, value, unit, note]) => <div key={label}><span>{label}</span><strong>{value}<small>{unit}</small></strong><p>{note}</p></div>)}</div></div>
+    <div className="analytics-highlight"><div><span>{t('participationRateAnnual')}</span><strong>{participationRate}%</strong><p>{isEn ? `${participated} of ${members.length} active members recorded` : `${members.length} 位在编成员中 ${participated} 位有记录`}</p></div><div className="participation-bars">{monthlyTrend.map((item, index) => <div key={index}><span style={{ height: `${Math.round((Number(item.active) || 0) / maxActive * 100)}%` }} /><small>{item.month}</small></div>)}</div><div className="highlight-side"><span>{t('annualResults')}</span><strong>{totals.tasks}<small>{isEn ? ' items' : ' 项'}</small></strong><p>{isEn ? `${teams.length} teams tracked` : `涵盖 ${teams.length} 个团队`}</p></div></div>
+    <div className="analytics-grid"><div className="card analytics-bar-card"><div className="card-header"><div><h2>{t('teamComparison')}</h2><p>{t('teamComparisonSub')}</p></div><div className="segmented small"><button className={dimension === '团队工作量' ? 'active' : ''} onClick={() => setDimension('团队工作量')}>{t('workload')}</button><button className={dimension === '团队积分' ? 'active' : ''} onClick={() => setDimension('团队积分')}>{t('teamPoints')}</button></div></div><div className="bar-chart-large"><ResponsiveContainer width="100%" height="100%"><BarChart data={teamChart} margin={{ top: 15, right: 5, left: -22, bottom: 0 }}><CartesianGrid vertical={false} stroke="#ececea" strokeDasharray="3 3" /><XAxis dataKey="name" axisLine={false} tickLine={false} tick={{ fontSize: 12, fill: '#777772' }} /><YAxis axisLine={false} tickLine={false} tick={{ fontSize: 11, fill: '#999994' }} /><Tooltip content={<CustomTooltip />} /><Bar dataKey={dimension === '团队积分' ? 'points' : 'value'} name={dimension === '团队积分' ? t('teamPoints') : t('workload')} radius={[5, 5, 0, 0]} maxBarSize={40}>{teamChart.map((entry, index) => <Cell key={index} fill={index === 0 ? '#e62b1e' : '#deded9'} />)}</Bar></BarChart></ResponsiveContainer></div></div><div className="card points-distribution"><div className="card-header"><div><h2>{t('pointsDistribution')}</h2><p>{t('pointsDistributionSub')}</p></div></div>{pieData.length ? <><div className="distribution-chart"><ResponsiveContainer width="100%" height="100%"><PieChart><Pie data={pieData} dataKey="value" innerRadius={58} outerRadius={82} paddingAngle={4} stroke="none">{pieData.map((entry, index) => <Cell key={index} fill={entry.color} />)}</Pie><Tooltip /></PieChart></ResponsiveContainer><div><strong>{typeSum.toLocaleString()}</strong><span>{t('annualPoints')}</span></div></div><div className="distribution-legend">{pieData.map(item => <div key={item.name}><i style={{ background: item.color }} /><span>{displayValue(item.name, language)}</span><strong>{Math.round(item.value / typeSum * 100)}%</strong></div>)}</div></> : <EmptyState title={isEn ? 'No points records yet' : '暂无积分流水'} description={isEn ? 'The distribution appears once points are credited.' : '积分入账后，这里会按类型显示真实分布。'} />}</div></div>
+    <div className="card annual-summary"><div className="card-header"><div><h2>{t('annualSummary')}</h2><p>{t('annualSummarySub')}</p></div><span className="updated-time"><CircleCheck size={14} />{isEn ? `Updated ${lastUpdated}` : `数据更新于 ${lastUpdated}`}</span></div><div className="annual-summary-grid">{summaryItems.map(([label, value, unit, note]) => <div key={label}><span>{label}</span><strong>{value}<small>{unit}</small></strong><p>{note}</p></div>)}</div></div>
   </div>;
 }
 
@@ -1244,12 +1419,23 @@ function txFmtDate(s) {
   if (iso) return `${Number(iso[2])}月${Number(iso[3])}日`;
   return s || '—';
 }
-function MemberDetail({ member, transactions = [], onClose, exportCsv, isEn, language }) {
+function MemberDetail({ member, transactions = [], tasks = [], teams = [], isAdmin = false, onClose, exportCsv, notify, isEn, language, onUpdate, onReload }) {
+  const L = (zh, en) => (isEn ? en : zh);
   const [tab, setTab] = useState('贡献概览');
-  const L = (zh, en) => isEn ? en : zh;
+  const [editing, setEditing] = useState(false);
+  const [form, setForm] = useState(null);
+  const [syncState, setSyncState] = useState('idle');
+  const [syncResult, setSyncResult] = useState(null);
+  const [syncError, setSyncError] = useState('');
+  const [org, setOrg] = useState(null);
+  const [orgLoading, setOrgLoading] = useState(false);
+
   // 仅取该成员的真实积分流水，避免同名或演示数据串味。
   const myTx = useMemo(() => (transactions || []).filter(tx => tx && tx.member === member.name), [transactions, member.name]);
   const totalPoints = myTx.reduce((s, tx) => s + (Number(tx.points) || 0), 0);
+  const myTasks = useMemo(() => (tasks || []).filter(item => item && item.owner === member.name), [tasks, member.name]);
+  const doneTaskCount = myTasks.filter(item => item.status === '已完成').length;
+  const monthPoints = myTx.filter(tx => monthIndex(tx) === new Date().getMonth() + 1).reduce((s, tx) => s + (Number(tx.points) || 0), 0);
   // GitHub 式贡献轨迹：按日期聚合真实流水，最近 10 周（70 天），对齐到周日开头。
   const heatmap = useMemo(() => {
     const byDate = {};
@@ -1272,7 +1458,286 @@ function MemberDetail({ member, transactions = [], onClose, exportCsv, isEn, lan
   }, [myTx]);
   const recent = useMemo(() => [...myTx].sort((a, b) => txNormalizeDate(b.date).localeCompare(txNormalizeDate(a.date))).slice(0, 6), [myTx]);
   const ledger = useMemo(() => [...myTx].sort((a, b) => txNormalizeDate(b.date).localeCompare(txNormalizeDate(a.date))), [myTx]);
-  return <Modal title="成员档案" subtitle={`Member ID · TEDx-${String(member.id).padStart(4, '0')}`} onClose={onClose} size="lg" footer={<><Button variant="secondary" onClick={onClose}>关闭</Button><Button variant="secondary" icon={Download} onClick={() => exportCsv(`${member.name}年度贡献报告`)}>导出贡献报告</Button></>}><div className="member-profile-hero"><Avatar name={member.name} src={member.avatar} size="xl" /><div><h2>{member.name}<span>{member.english}</span></h2><p>{member.team} · {member.position || member.role}</p><div><StatusBadge>{member.status}</StatusBadge><span><CalendarDays size={14} />加入于 {member.joined}</span></div></div><button className="icon-button bordered"><Pencil size={17} /></button></div><div className="member-detail-stats"><div><strong>{member.points}</strong><span>年度累计积分</span></div><div><strong>{member.tasks}</strong><span>年度完成任务</span></div><div><strong>{member.events}</strong><span>参与活动次数</span></div><div><strong>{member.monthPoints}</strong><span>本月新增积分</span></div></div><div className="review-tabs">{['贡献概览', '参与记录', '积分明细', '档案信息'].map(t => <button className={tab === t ? 'active' : ''} key={t} onClick={() => setTab(t)}>{t}</button>)}</div>{tab === '贡献概览' ? <div className="member-contribution-overview"><h3>2026 年贡献轨迹</h3><div className="contribution-calendar">{heatmap.map(c => <i key={c.key} className={`level-${c.level}${c.future ? ' future' : ''}`} title={`${c.key} · ${c.points} ${L('分', 'pts')}`} />)}</div><div className="contribution-caption"><span>过去 10 周参与记录</span><span>少 <i className="level-1" /><i className="level-2" /><i className="level-3" /><i className="level-4" /> 多</span></div><h3>{L('近期主要贡献', 'Recent Contributions')}</h3>{recent.length ? <div className="simple-timeline">{recent.map((tx, i) => <div key={i}><i /><span>{txFmtDate(tx.date)}</span><p><strong>{tx.source}</strong>{tx.type} · {tx.points > 0 ? '+' : ''}{tx.points} {L('分', 'pts')}</p></div>)}</div> : <EmptyState title={L('暂无积分流水', 'No transactions yet')} description={L('该成员暂未产生积分流水，贡献轨迹将在积分入账后自动生成。', 'Contribution trail will appear once points are recorded.')} />}</div> : tab === '参与记录' ? <div className="member-tab-body">{myTx.length ? <div className="simple-timeline">{[...myTx].sort((a, b) => txNormalizeDate(b.date).localeCompare(txNormalizeDate(a.date))).map((tx, i) => <div key={i}><i /><span>{txFmtDate(tx.date)}</span><p><strong>{tx.source}</strong>{tx.type} · {tx.points > 0 ? '+' : ''}{tx.points} {L('分', 'pts')}</p></div>)}</div> : <EmptyState title={L('暂无参与记录', 'No participation records')} description={L('该成员的积分流水为空，参与记录将在积分入账后显示。', 'Participation records appear once points are recorded.')} />}</div> : tab === '积分明细' ? <div className="member-tab-body"><div className="card table-card"><div className="table-toolbar"><div className="local-search"><span>{L('合计', 'Total')}：<strong className="points-number">{totalPoints}</strong> {L('分', 'pts')}</span></div></div><div className="table-wrap"><table className="data-table"><thead><tr><th>{L('日期', 'Date')}</th><th>{L('来源', 'Source')}</th><th>{L('类型', 'Type')}</th><th>{L('团队', 'Team')}</th><th>{L('积分', 'Points')}</th><th>{L('状态', 'Status')}</th></tr></thead><tbody>{ledger.map((tx, i) => <tr key={i}><td className="muted">{txFmtDate(tx.date)}</td><td><strong>{tx.source}</strong></td><td><StatusBadge>{tx.type}</StatusBadge></td><td>{tx.team || '—'}</td><td><strong className={Number(tx.points) >= 0 ? 'positive-points' : 'negative-points'}>{Number(tx.points) > 0 ? '+' : ''}{tx.points}</strong></td><td><StatusBadge>{tx.status}</StatusBadge></td></tr>)}</tbody></table>{!ledger.length && <EmptyState title={L('暂无积分明细', 'No points ledger')} description={L('该成员暂未产生积分流水。', 'No point transactions for this member yet.')} />}</div></div></div> : <div className="profile-info-list">{[['所属团队', member.team || '—'], ['担任职务', member.position || '—'], ['联系邮箱', member.email || '—'], ['成员状态', member.status || '—'], ['加入时间', member.joined || '—'], [L('数据来源', 'Data source'), member.feishu_open_id ? L('飞书通讯录同步', 'Feishu contact sync') : L('手动录入', 'Manual entry')]].map(([l, v]) => <div key={l}><span>{l}</span><strong>{v}</strong></div>)}</div>}</Modal>;
+
+  const feishuProfile = useMemo(() => {
+    try {
+      const parsed = member.feishu_profile ? JSON.parse(member.feishu_profile) : {};
+      return parsed && typeof parsed === 'object' ? parsed : {};
+    } catch { return {}; }
+  }, [member.feishu_profile]);
+  const isFeishuMember = Boolean(member.feishu_open_id);
+
+  const startEdit = () => {
+    setForm({
+      name: member.name || '', english: member.english || '', email: member.email || '',
+      team: member.team || '', position: member.position || '', role: member.role || '成员',
+      status: member.status || '正常', joined: member.joined || '',
+      member_status: member.member_status || 'active', introduction: member.introduction || '',
+    });
+    setEditing(true);
+  };
+  const cancelEdit = () => { setEditing(false); setForm(null); };
+  const updateField = (key, value) => setForm(prev => ({ ...prev, [key]: value }));
+  const saveEdit = () => {
+    if (!form?.name?.trim()) { notify(L('请填写姓名', 'Name is required')); return; }
+    onUpdate?.({ ...form, name: form.name.trim() });
+    setEditing(false); setForm(null);
+    notify(L('档案已保存并同步到云端', 'Profile saved'));
+  };
+
+  const syncErrorText = res => {
+    if (!res) return L('未知错误', 'Unknown error');
+    if (res.error === 'UNAUTHORIZED' || res.error === 'FORBIDDEN') return L('需要以管理员身份通过飞书登录后才能执行同步（当前会话无服务端权限）', 'Sign in with Feishu as an admin to run sync');
+    return res.message || res.error || L('未知错误', 'Unknown error');
+  };
+
+  const runMemberSync = async () => {
+    if (!isFeishuMember) { notify(L('该成员不是飞书同步来源，无法从飞书拉取', 'This member has no Feishu account')); return; }
+    setSyncState('syncing'); setSyncError('');
+    const res = await feishuSyncMember({ openId: member.feishu_open_id, memberId: member.id });
+    if (res?.ok) {
+      setSyncResult(res);
+      setSyncState('done');
+      onUpdate?.(res.patch || {});
+      notify(res.email?.available
+        ? L('已从飞书同步组别、职务与邮箱', 'Synced team, position and email from Feishu')
+        : L('已同步组别与职务；飞书未返回邮箱（需开通邮箱权限）', 'Synced team and position; Feishu returned no email'));
+    } else {
+      setSyncState('error');
+      setSyncError(syncErrorText(res));
+      notify(L(`同步失败：${syncErrorText(res)}`, `Sync failed: ${syncErrorText(res)}`));
+    }
+  };
+
+  const loadOrg = async () => {
+    setOrgLoading(true);
+    const res = await feishuOrgSnapshot();
+    setOrgLoading(false);
+    if (res?.ok) setOrg(res);
+    else notify(L(`读取飞书组织架构失败：${syncErrorText(res)}`, `Failed to read Feishu org: ${syncErrorText(res)}`));
+  };
+
+  const runFullSync = async () => {
+    setSyncState('syncing'); setSyncError('');
+    const res = await feishuSync('incremental');
+    if (res?.ok) {
+      setSyncState('done');
+      notify(L(`飞书通讯录已同步：更新 ${res.updated ?? 0} 位成员，组别与负责人已对齐`, `Directory synced: ${res.updated ?? 0} members updated`));
+      onReload?.();
+    } else {
+      setSyncState('error');
+      setSyncError(syncErrorText(res));
+      notify(L(`同步失败：${syncErrorText(res)}`, `Sync failed: ${syncErrorText(res)}`));
+    }
+  };
+
+  const tabs = ['贡献概览', '参与记录', '积分明细', '档案信息', ...(isAdmin ? ['飞书同步'] : [])];
+  const tabLabel = key => ({
+    '贡献概览': L('贡献概览', 'Overview'),
+    '参与记录': L('参与记录', 'Activity'),
+    '积分明细': L('积分明细', 'Points ledger'),
+    '档案信息': L('档案信息', 'Profile'),
+    '飞书同步': L('飞书同步', 'Feishu sync'),
+  }[key] || key);
+
+  const infoRows = [
+    [L('姓名', 'Name'), member.name || '—'],
+    [L('英文名', 'English name'), member.english || '—'],
+    [L('联系邮箱', 'Email'), member.email || '—'],
+    [L('所属团队', 'Team'), member.team || '—'],
+    [L('担任职务', 'Position'), member.position || member.role || '—'],
+    [L('参与身份', 'Role'), member.role || '—'],
+    [L('状态', 'Status'), member.status || '—'],
+    [L('档案归属', 'Archive'), member.member_status === 'active' ? L('在编成员', 'Active') : L('历届成员（已归档）', 'Alumni (archived)')],
+    [L('加入时间', 'Joined'), member.joined || '—'],
+    [L('飞书账号', 'Feishu account'), isFeishuMember ? `…${String(member.feishu_open_id).slice(-10)}` : L('非飞书来源（手动创建）', 'Not from Feishu (manual)')],
+    [L('飞书部门', 'Feishu dept'), feishuProfile.department_name || '—'],
+    [L('部门负责人', 'Dept owner'), feishuProfile.leader_name || '—'],
+    [L('最近同步', 'Last sync'), member.last_sync_at ? String(member.last_sync_at).replace('T', ' ').slice(0, 16) : '—'],
+  ];
+
+  return (
+    <Modal
+      title={L('成员档案', 'Member profile')}
+      subtitle={`Member ID · ${String(member.id || '').toUpperCase().slice(0, 20)}`}
+      onClose={onClose}
+      size="lg"
+      footer={editing
+        ? <><Button variant="secondary" onClick={cancelEdit}>{L('取消', 'Cancel')}</Button><Button icon={Check} onClick={saveEdit}>{L('保存档案', 'Save profile')}</Button></>
+        : <><Button variant="secondary" onClick={onClose}>{L('关闭', 'Close')}</Button><Button variant="secondary" icon={Download} onClick={() => exportCsv(`${member.name}年度贡献报告`)}>{L('导出贡献报告', 'Export report')}</Button></>}
+    >
+      <div className="member-profile-hero">
+        <Avatar name={member.name} src={member.avatar} size="xl" />
+        <div>
+          <h2>{member.name}<span>{member.english}</span></h2>
+          <p>{member.team || L('未分配团队', 'No team')} · {member.position || member.role || L('成员', 'Member')}</p>
+          <div>
+            <StatusBadge>{member.status}</StatusBadge>
+            <span><CalendarDays size={14} />{L('加入于', 'Joined')} {member.joined || '—'}</span>
+            {member.member_status !== 'active' && <StatusBadge tone="gray">{L('历届', 'Alumni')}</StatusBadge>}
+          </div>
+        </div>
+        {!editing && <button className="icon-button bordered" title={L('编辑档案', 'Edit profile')} onClick={startEdit}><Pencil size={17} /></button>}
+      </div>
+
+      {editing ? (
+        <div className="member-edit-panel">
+          <div className="form-grid">
+            <Field label={L('姓名', 'Name')} required><input autoFocus value={form.name} onChange={e => updateField('name', e.target.value)} /></Field>
+            <Field label={L('英文名', 'English name')}><input value={form.english} onChange={e => updateField('english', e.target.value)} /></Field>
+            <Field label={L('联系邮箱', 'Email')} hint={isFeishuMember ? L('飞书同步会覆盖此字段', 'Feishu sync overwrites this') : ''}><input type="email" value={form.email} onChange={e => updateField('email', e.target.value)} placeholder="name@example.com" /></Field>
+            <Field label={L('所属团队', 'Team')}>
+              <select value={form.team} onChange={e => updateField('team', e.target.value)}>
+                <option value="">{L('未分配', 'Unassigned')}</option>
+                {teams.map(team => <option key={team.id} value={team.name}>{team.name}</option>)}
+                {form.team && !teams.some(team => team.name === form.team) ? <option value={form.team}>{form.team}</option> : null}
+              </select>
+            </Field>
+            <Field label={L('担任职务', 'Position')} hint={L('与飞书 job_title 对应', 'Mirrors Feishu job_title')}><input value={form.position} onChange={e => updateField('position', e.target.value)} placeholder={L('如：视觉设计', 'e.g. Visual designer')} /></Field>
+            <Field label={L('参与身份', 'Role')}>
+              <select value={form.role} onChange={e => updateField('role', e.target.value)}>
+                <option value="组长">{L('组长', 'Team lead')}</option>
+                <option value="副组长">{L('副组长', 'Deputy lead')}</option>
+                <option value="成员">{L('成员', 'Member')}</option>
+              </select>
+            </Field>
+            <Field label={L('状态', 'Status')}>
+              <select value={form.status} onChange={e => updateField('status', e.target.value)}>
+                <option value="正常">{L('正常', 'Active')}</option>
+                <option value="暂停">{L('暂停', 'Paused')}</option>
+                <option value="退出">{L('退出', 'Left')}</option>
+              </select>
+            </Field>
+            <Field label={L('档案归属', 'Archive')} hint={L('历届成员不计入在编名册与排名', 'Alumni are excluded from roster and rankings')}>
+              <select value={form.member_status} onChange={e => updateField('member_status', e.target.value)}>
+                <option value="active">{L('在编成员', 'Active')}</option>
+                <option value="alumni">{L('历届成员（归档）', 'Alumni (archived)')}</option>
+              </select>
+            </Field>
+            <Field label={L('加入时间', 'Joined')}><input value={form.joined} onChange={e => updateField('joined', e.target.value)} placeholder="2026.03" /></Field>
+            <Field label={L('个人简介', 'Introduction')} full><textarea rows="3" value={form.introduction} onChange={e => updateField('introduction', e.target.value)} placeholder={L('兴趣方向、可承担的工作等（选填）', 'Interests, strengths, optional')} /></Field>
+          </div>
+          <p className="member-edit-hint"><Info size={15} />{L('保存后立即写入云端数据库；飞书来源的成员下次同步时，组别与负责人会被飞书数据覆盖。', 'Saved to the cloud database immediately. For Feishu-sourced members, team and leader are overwritten by the next sync.')}</p>
+        </div>
+      ) : (
+        <>
+          <div className="member-detail-stats">
+            <div><strong>{totalPoints}</strong><span>{L('年度累计积分', 'Annual points')}</span></div>
+            <div><strong>{doneTaskCount}</strong><span>{L('年度完成任务', 'Tasks done')}</span></div>
+            <div><strong>{myTx.length}</strong><span>{L('参与记录条数', 'Participation records')}</span></div>
+            <div><strong>{monthPoints}</strong><span>{L('本月新增积分', 'Points this month')}</span></div>
+          </div>
+
+          <div className="review-tabs">{tabs.map(key => <button className={tab === key ? 'active' : ''} key={key} onClick={() => setTab(key)}>{tabLabel(key)}</button>)}</div>
+
+          {tab === '贡献概览' && (
+            <div className="member-contribution-overview">
+              <h3>{L('2026 年贡献轨迹', 'Contribution trail · 2026')}</h3>
+              <div className="contribution-calendar">{heatmap.map(c => <i key={c.key} className={`level-${c.level}${c.future ? ' future' : ''}`} title={`${c.key} · ${c.points} ${L('分', 'pts')}`} />)}</div>
+              <div className="contribution-caption"><span>{L('过去 10 周参与记录', 'Last 10 weeks')}</span><span>{L('少', 'Less')} <i className="level-1" /><i className="level-2" /><i className="level-3" /><i className="level-4" /> {L('多', 'More')}</span></div>
+              <h3>{L('近期主要贡献', 'Recent contributions')}</h3>
+              {recent.length ? <div className="simple-timeline">{recent.map((tx, i) => <div key={i}><i /><span>{txFmtDate(tx.date)}</span><p><strong>{tx.source}</strong>{tx.type} · {tx.points > 0 ? '+' : ''}{tx.points} {L('分', 'pts')}</p></div>)}</div> : <EmptyState title={L('暂无积分流水', 'No transactions yet')} description={L('该成员暂未产生积分记录，团队记分后会在这里显示真实贡献轨迹。', 'Contribution appears once points are recorded.')} />}
+            </div>
+          )}
+
+          {tab === '参与记录' && (
+            recent.length
+              ? <div className="simple-timeline">{recent.map((tx, i) => <div key={i}><i /><span>{txFmtDate(tx.date)}</span><p><strong>{tx.source}</strong>{tx.type} · {tx.points > 0 ? '+' : ''}{tx.points} {L('分', 'pts')} · {tx.team || '—'}</p></div>)}</div>
+              : <EmptyState title={L('暂无参与记录', 'No activity yet')} description={L('月报、任务与积分入账后会记录在这里。', 'Reports, tasks and points will appear here.')} />
+          )}
+
+          {tab === '积分明细' && (
+            ledger.length ? (
+              <div className="table-wrap">
+                <table className="data-table">
+                  <thead><tr><th>{L('来源', 'Source')}</th><th>{L('类型', 'Type')}</th><th>{L('日期', 'Date')}</th><th>{L('状态', 'Status')}</th><th>{L('积分', 'Points')}</th></tr></thead>
+                  <tbody>{ledger.map(tx => <tr key={tx.id}><td><strong>{tx.source}</strong></td><td><StatusBadge>{tx.type}</StatusBadge></td><td className="muted">{tx.date}</td><td><StatusBadge>{tx.status}</StatusBadge></td><td><strong className={Number(tx.points) >= 0 ? 'positive-points' : 'negative-points'}>{Number(tx.points) > 0 ? '+' : ''}{tx.points}</strong></td></tr>)}</tbody>
+                </table>
+              </div>
+            ) : <EmptyState title={L('暂无积分明细', 'No points records')} description={L('所有积分均有明确来源与审核记录。', 'Every point has a source and review record.')} />
+          )}
+
+          {tab === '档案信息' && (
+            <div className="member-info-panel">
+              <div className="member-info-head">
+                <h3>{L('基础信息', 'Basic info')}</h3>
+                <button className="text-button" onClick={startEdit}><Pencil size={14} />{L('编辑', 'Edit')}</button>
+              </div>
+              <dl className="member-info-grid">{infoRows.map(([label, value]) => <div key={label}><dt>{label}</dt><dd>{value}</dd></div>)}</dl>
+              <p className="member-edit-hint"><Info size={15} />{isFeishuMember ? L('该成员由飞书通讯录同步，组别、职务与部门负责人以飞书为准。', 'Synced from Feishu: team, position and dept owner follow Feishu.') : L('该成员为手动创建，姓名、邮箱与团队可直接编辑。', 'Manually created: name, email and team are editable.')}</p>
+            </div>
+          )}
+
+          {tab === '飞书同步' && isAdmin && (
+            <div className="feishu-sync-panel">
+              <div className="fx-sync-block">
+                <div className="fx-sync-head">
+                  <span className={`fx-sync-dot ${syncState}`} />
+                  <div>
+                    <strong>{L('成员飞书同步', 'Member Feishu sync')}</strong>
+                    <p>{isFeishuMember ? L('从飞书通讯录拉取该成员的组别、职务、邮箱与部门负责人。', 'Pull team, position, email and dept owner from the Feishu directory.') : L('该成员没有飞书 open_id，无法执行单人同步。', 'No Feishu open_id on this member — single sync is unavailable.')}</p>
+                  </div>
+                </div>
+                <div className="fx-sync-actions">
+                  <button className="button" onClick={runMemberSync} disabled={!isFeishuMember || syncState === 'syncing'}>
+                    {syncState === 'syncing' ? <RefreshCw size={15} className="fx-spin" /> : <Download size={15} />}
+                    {L('同步此成员', 'Sync this member')}
+                  </button>
+                  <button className="button secondary" onClick={runFullSync} disabled={syncState === 'syncing'}>
+                    <RefreshCw size={15} />{L('同步整个通讯录（含组别与负责人）', 'Sync full directory')}
+                  </button>
+                  <button className="button ghost" onClick={loadOrg} disabled={orgLoading}>
+                    <Users size={15} />{orgLoading ? L('读取中…', 'Loading…') : L('查看组别映射', 'View team mapping')}
+                  </button>
+                </div>
+                {syncResult?.ok && (
+                  <div className="fx-sync-result-inline">
+                    <Check size={15} />
+                    <span>
+                      {L('组别', 'Team')}：{syncResult.team || '—'} · {L('部门', 'Dept')}：{(syncResult.departments || []).join(' / ') || '—'} · {L('负责人', 'Owner')}：{syncResult.leader?.name || '—'}
+                    </span>
+                  </div>
+                )}
+                {syncState === 'error' && <div className="fx-sync-error"><CircleAlert size={15} /><span>{syncError}</span></div>}
+                {member.email ? null : (
+                  <div className="fx-sync-hint">
+                    <Info size={15} />
+                    <span>{L('飞书目前未返回邮箱。在飞书开放平台为应用开通 contact:user.email:readonly 后，再点「同步此成员」即可自动补全。', 'Feishu returns no email yet. Enable contact:user.email:readonly in the Feishu console, then run “Sync this member” to backfill it.')}</span>
+                  </div>
+                )}
+              </div>
+
+              <div className="fx-mapping-block">
+                <div className="fx-mapping-head">
+                  <h4>{L('组别 ↔ 飞书部门', 'Team ↔ Feishu department')}</h4>
+                  <span>{org ? L(`邮箱可见 ${org.email?.withEmail ?? 0} / ${org.email?.total ?? 0} 人`, `${org.email?.withEmail ?? 0}/${org.email?.total ?? 0} emails visible`) : L('点击「查看组别映射」读取实时结构', 'Load the live structure')}</span>
+                </div>
+                {org ? (
+                  <div className="table-wrap">
+                    <table className="data-table fx-map-table">
+                      <thead><tr><th>{L('飞书部门', 'Feishu dept')}</th><th>{L('部门负责人（=组长）', 'Dept owner (= lead)')}</th><th>{L('人数', 'Members')}</th><th>{L('对应组别', 'Mapped team')}</th></tr></thead>
+                      <tbody>
+                        {org.departments.map(dept => (
+                          <tr key={dept.id} className={dept.isTop ? '' : 'fx-sub-dept'}>
+                            <td>{dept.parentName ? `${dept.parentName} / ` : ''}<strong>{dept.name}</strong></td>
+                            <td>{dept.leaderName || <span className="muted">—</span>}</td>
+                            <td>{dept.memberCount}</td>
+                            <td>{dept.isReserve ? <StatusBadge tone="gray">{L('储备（后备）', 'Reserve')}</StatusBadge> : dept.team ? <StatusBadge tone="green">{dept.team}</StatusBadge> : <StatusBadge tone="gray">{L('未映射', 'Unmapped')}</StatusBadge>}</td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
+                ) : (
+                  <p className="muted">{L('尚未读取。点击上方「查看组别映射」获取当前飞书组织架构。', 'Not loaded yet.')}</p>
+                )}
+              </div>
+            </div>
+          )}
+        </>
+      )}
+    </Modal>
+  );
 }
 
 function MemberForm({ onClose, onSave }) {
@@ -1291,7 +1756,82 @@ function PointsAdjust({ members, onClose, onSave }) {
   const submit = () => { if (!form.member || !form.source || !form.reason) { setError('请填写成员、积分来源与调整原因，确保记录可追溯'); return; } onSave({ ...form, points: form.direction === '扣减积分' ? -Math.abs(form.points) : Math.abs(form.points) }); };
   return <Modal title="手动调整积分" subtitle="所有调整将生成新流水并保留操作记录" onClose={onClose} footer={<><Button variant="secondary" onClick={onClose}>取消</Button><Button icon={Check} onClick={submit}>确认调整并入账</Button></>}><div className="adjust-warning"><Info size={17} /><span>历史积分流水不可直接删除。如需修正，请通过反向调整生成补充流水。</span></div><div className="form-grid"><Field label="调整成员" required full><input value={form.member} onChange={e => setForm(prev => ({ ...prev, member: e.target.value }))} placeholder="填写成员姓名" /></Field><Field label="调整方向"><div className="radio-group"><button className={form.direction === '增加积分' ? 'selected' : ''} onClick={() => setForm(prev => ({ ...prev, direction: '增加积分' }))}><i />增加积分</button><button className={form.direction === '扣减积分' ? 'selected' : ''} onClick={() => setForm(prev => ({ ...prev, direction: '扣减积分' }))}><i />扣减积分</button></div></Field><Field label="调整积分" required><div className="number-input"><input type="number" min="1" value={form.points} onChange={e => setForm(prev => ({ ...prev, points: Number(e.target.value) }))} /><span>分</span></div></Field><Field label="积分类型"><select value={form.type} onChange={e => setForm(prev => ({ ...prev, type: e.target.value }))}><option>特别贡献</option><option>任务贡献</option><option>组织贡献</option><option>社区贡献</option></select></Field><Field label="关联团队"><input value={form.team} disabled /></Field><Field label="积分来源" required full><input placeholder="例如：年度大会紧急视觉物料支援" value={form.source} onChange={e => setForm(prev => ({ ...prev, source: e.target.value }))} /></Field><Field label="调整原因" required full><textarea rows="3" placeholder="请说明本次调整的具体原因，供成员与审计查看…" value={form.reason} onChange={e => setForm(prev => ({ ...prev, reason: e.target.value }))} /></Field>{error && <span className="field-error field-full">{error}</span>}</div></Modal>;
 }
+function TeamDetail({ team, reports = [], tasks = [], members = [], onClose, navigate, isEn }) {
+  const L = (zh, en) => (isEn ? en : zh);
+  const teamMembers = members.filter(m => m.team === team.name);
+  const teamTasks = tasks.filter(t => t.team === team.name);
+  const teamReports = reports.filter(r => r.team === team.name);
+  const totalHours = teamTasks.reduce((s, t) => s + (Number(t.hours) || 0), 0) + teamReports.reduce((s, r) => s + (Number(r.hours) || 0), 0);
+  // 近 6 个月工作量：按真实任务工时 + 月报工时聚合，没有记录就显示空态。
+  const now = new Date();
+  const series = Array.from({ length: 6 }, (_, i) => {
+    const d = new Date(now.getFullYear(), now.getMonth() - (5 - i), 1);
+    const key = d.getMonth() + 1;
+    const hours = teamTasks.filter(t => monthIndex(t) === key).reduce((s, t) => s + (Number(t.hours) || 0), 0)
+      + teamReports.filter(r => monthIndex(r) === key).reduce((s, r) => s + (Number(r.hours) || 0), 0);
+    return { month: `${key}月`, value: Math.round(hours) };
+  });
+  const hasSeries = series.some(item => item.value > 0);
+  const completed = teamTasks.filter(t => t.status === '已完成').length;
 
-function TeamDetail({ team, onClose, navigate }) {
-  return <Modal title={team.name} subtitle={`Team ID · ${String(team.id).toUpperCase()}`} onClose={onClose} size="lg" footer={<><Button variant="secondary" onClick={onClose}>关闭</Button><Button icon={FileText} onClick={() => { onClose(); navigate('reports'); }}>查看团队月报</Button></>}><div className="team-detail-hero"><span className="team-large-mark" style={{ background: `${team.color}14`, color: team.color }}>{team.short}</span><div><h3>{team.description}</h3><p><Avatar name={team.leader || '待'} size="xs" />组长 · {team.leader || '待指定'}<span>成立于 2026 年</span></p></div></div><div className="member-detail-stats"><div><strong>{team.members}</strong><span>团队成员</span></div><div><strong>{team.tasks}</strong><span>本月任务</span></div><div><strong>{team.workload}h</strong><span>本月工作量</span></div><div><strong>{team.points}</strong><span>年度积分</span></div></div><div className="team-detail-chart"><h3>近 6 个月团队工作量</h3><ResponsiveContainer width="100%" height={190}><AreaChart data={trendData.slice(5).map((d, i) => ({ month: d.month, value: Math.round(d.workload * 0.18) }))}><defs><linearGradient id="teamArea" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stopColor={team.color} stopOpacity={0.25} /><stop offset="1" stopColor={team.color} stopOpacity={0} /></linearGradient></defs><CartesianGrid vertical={false} stroke="#eee" /><XAxis dataKey="month" axisLine={false} tickLine={false} tick={{ fontSize: 11 }} /><YAxis axisLine={false} tickLine={false} tick={{ fontSize: 11 }} /><Tooltip /><Area type="monotone" dataKey="value" stroke={team.color} fill="url(#teamArea)" strokeWidth={2.3} /></AreaChart></ResponsiveContainer></div><div className="team-members-preview"><h3>核心成员</h3><div>{team.avatars.map((n, i) => <div key={n}><Avatar name={n} /><span>{n}{['墨', '然', '青', '远'][i]}</span></div>)}</div></div></Modal>;
+  return (
+    <Modal
+      title={team.name}
+      subtitle={team.feishu_department_name ? `${L('飞书部门', 'Feishu dept')} · ${team.feishu_department_name}` : `Team ID · ${String(team.id).toUpperCase()}`}
+      onClose={onClose}
+      size="lg"
+      footer={<><Button variant="secondary" onClick={onClose}>{L('关闭', 'Close')}</Button><Button icon={FileText} onClick={() => { onClose(); navigate('reports'); }}>{L('查看团队月报', 'Team reports')}</Button></>}
+    >
+      <div className="team-detail-hero">
+        <span className="team-large-mark" style={{ background: `${team.color}14`, color: team.color }}>{team.short}</span>
+        <div>
+          <h3>{team.description}</h3>
+          <p>
+            <Avatar name={team.leader || '?'} size="xs" />
+            {L('组长', 'Lead')} · {team.leader || L('待指定', 'To be assigned')}
+            <span>{L('组长来自飞书部门负责人', 'Lead comes from the Feishu dept owner')}</span>
+          </p>
+        </div>
+      </div>
+
+      <div className="member-detail-stats">
+        <div><strong>{teamMembers.length}</strong><span>{L('在编成员', 'Active members')}</span></div>
+        <div><strong>{teamTasks.length}</strong><span>{L('年度任务', 'Tasks')}</span></div>
+        <div><strong>{completed}</strong><span>{L('已完成任务', 'Completed')}</span></div>
+        <div><strong>{Math.round(totalHours)}h</strong><span>{L('累计工作量', 'Workload')}</span></div>
+      </div>
+
+      <div className="team-detail-chart">
+        <h3>{L('近 6 个月工作量', 'Workload · last 6 months')}</h3>
+        {hasSeries ? (
+          <ResponsiveContainer width="100%" height={190}>
+            <AreaChart data={series}>
+              <defs>
+                <linearGradient id="teamAreaReal" x1="0" y1="0" x2="0" y2="1">
+                  <stop offset="0" stopColor={team.color} stopOpacity={0.25} />
+                  <stop offset="1" stopColor={team.color} stopOpacity={0} />
+                </linearGradient>
+              </defs>
+              <CartesianGrid vertical={false} stroke="#eee" />
+              <XAxis dataKey="month" axisLine={false} tickLine={false} tick={{ fontSize: 11 }} />
+              <YAxis axisLine={false} tickLine={false} tick={{ fontSize: 11 }} />
+              <Tooltip />
+              <Area type="monotone" dataKey="value" stroke={team.color} fill="url(#teamAreaReal)" strokeWidth={2.3} />
+            </AreaChart>
+          </ResponsiveContainer>
+        ) : (
+          <EmptyState title={L('暂无工作量记录', 'No workload records yet')} description={L('成员提交月报或登记任务工时后，这里会显示真实曲线。', 'The chart appears once reports or task hours are recorded.')} />
+        )}
+      </div>
+
+      <div className="team-members-preview">
+        <h3>{L('团队成员', 'Team members')}</h3>
+        {teamMembers.length ? (
+          <div>{teamMembers.slice(0, 12).map(m => <div key={m.id}><Avatar name={m.name} src={m.avatar} /><span>{m.name}<small>{m.role === '组长' ? L('组长', 'Lead') : (m.position || L('成员', 'Member'))}</small></span></div>)}</div>
+        ) : (
+          <EmptyState title={L('暂无在编成员', 'No active members')} description={L('飞书同步或手动添加成员后显示在这里。', 'Members appear here after Feishu sync or manual creation.')} />
+        )}
+      </div>
+    </Modal>
+  );
 }

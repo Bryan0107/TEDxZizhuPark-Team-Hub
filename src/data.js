@@ -14,18 +14,3 @@ export const pointTransactions = [];
 
 // 后备现场志愿者（历届成员）独立档案，初始为空，可在成员管理页添加。
 export const reserveVolunteers = [];
-
-// 年度趋势示意曲线（与具体组无关，用于驾驶舱图表占位）。
-export const trendData = [
-  { month: '1月', workload: 186, active: 28, points: 420 },
-  { month: '2月', workload: 162, active: 24, points: 360 },
-  { month: '3月', workload: 248, active: 35, points: 580 },
-  { month: '4月', workload: 292, active: 38, points: 680 },
-  { month: '5月', workload: 268, active: 36, points: 620 },
-  { month: '6月', workload: 356, active: 42, points: 820 },
-  { month: '7月', workload: 322, active: 39, points: 740 },
-  { month: '8月', workload: 386, active: 44, points: 890 },
-  { month: '9月', workload: 458, active: 51, points: 1060 },
-  { month: '10月', workload: 524, active: 56, points: 1180 },
-  { month: '11月', workload: 604, active: 48, points: 960 },
-];

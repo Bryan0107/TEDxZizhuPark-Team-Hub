@@ -147,6 +147,12 @@ const main = async () => {
   }
   await ensureIndex('members', 'idx_members_feishu_open_id', ['feishu_open_id']);
 
+  // ── 7.1 teams 增加飞书部门映射（组别 ↔ 飞书部门一一对应） ───────────
+  for (const [key, size] of [['feishu_open_department_id', 64], ['feishu_department_name', 128]]) {
+    if (await columnExists('teams', key)) { skipped.push(`col:teams.${key} exists`); continue; }
+    await safe(`col:teams.${key}`, () => db.createStringColumn({ databaseId: DB, tableId: 'teams', key, size, required: false }));
+  }
+
   console.log('\n=== CREATE OK (' + done.length + ') ===');
   done.forEach(x => console.log('  +', x));
   if (skipped.length) {

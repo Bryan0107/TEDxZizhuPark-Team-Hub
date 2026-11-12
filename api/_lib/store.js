@@ -51,6 +51,7 @@ export const MEMBER_COLUMNS = [
 
 const COLUMNS = {
   members: MEMBER_COLUMNS,
+  teams: ['name', 'short', 'color', 'leader', 'description', 'avatars', 'status', 'members', 'tasks', 'done', 'active', 'points', 'workload', 'feishu_open_department_id', 'feishu_department_name'],
   departments: ['feishu_open_department_id', 'feishu_department_id', 'department_name', 'parent_department_id', 'department_leader_id', 'sort_order', 'member_count', 'status', 'last_sync_at'],
   member_departments: ['member_id', 'feishu_open_department_id', 'department_name', 'is_primary'],
   feishu_integrations: ['app_id', 'app_name', 'tenant_name', 'status', 'last_check_at', 'last_sync_at', 'sync_interval', 'chat_id', 'chat_name', 'notify_members', 'notify_member_changes', 'notify_points', 'notify_workload', 'notify_events', 'notify_status', 'contact_scope_ok', 'dept_scope_ok', 'oauth_ready', 'scope_summary', 'note'],

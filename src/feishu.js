@@ -29,6 +29,14 @@ export const feishuStatus = (refresh = false) => req(`/api/feishu/status${refres
 /** 触发同步。 */
 export const feishuSync = (mode = 'incremental') => req('/api/feishu/sync', { method: 'POST', body: JSON.stringify({ mode }) });
 
+/** 飞书组织快照：组别 ↔ 部门 ↔ 部门负责人 + 邮箱字段可见性。 */
+export const feishuOrgSnapshot = () => req('/api/feishu/sync?action=departments').catch(err => ({ ok: false, error: err.message, departments: [], teams: [], email: { withEmail: 0, total: 0 } }));
+
+/** 单人同步：把某位成员的飞书资料（组别/职务/邮箱/负责人）拉回档案。 */
+export const feishuSyncMember = ({ openId, memberId, apply = true }) =>
+  req('/api/feishu/sync', { method: 'POST', body: JSON.stringify({ action: 'member', openId, memberId, apply }) })
+    .catch(err => ({ ok: false, error: err.message }));
+
 /** 保存集成配置。 */
 export const feishuSaveConfig = patch => req('/api/feishu/config', { method: 'POST', body: JSON.stringify(patch) });
 
