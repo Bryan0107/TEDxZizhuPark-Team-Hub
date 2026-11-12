@@ -546,3 +546,14 @@ input[type=number]::-webkit-outer-spin-button,
 input[type=number]::-webkit-inner-spin-button{-webkit-appearance:none;appearance:none;margin:0}
 input[type=number]{-moz-appearance:textfield;appearance:textfield}
 .number-input input{width:100%;padding-right:34px}
+
+/* ==== 月报编辑器：任务补充行 + 成员行两行显示 ==== */
+.editor-task-form{display:grid;grid-template-columns:1.5fr 0.95fr 0.85fr 0.55fr 0.75fr auto;gap:8px;align-items:center;margin-bottom:14px;padding:12px;border:1px dashed #e2e2dc;border-radius:8px;background:#fcfcfa}
+.editor-task-form>input,.editor-task-form>select{height:34px;border:1px solid #deded8;border-radius:6px;padding:0 9px;font-size:12.5px;background:#fff;min-width:0}
+.editor-task-form .editor-task-points{height:34px;border:1px solid #deded8;border-radius:6px;background:#fff}
+.editor-task-form .editor-task-points input{height:32px;border:0;padding:0 10px;width:100%}
+.editor-task-form .button{margin-left:0}
+@media(max-width:760px){.editor-task-form{grid-template-columns:1fr 1fr}}
+.editor-member-row>div:first-child>div{display:flex;flex-direction:column;min-width:0}
+.editor-member-row>div:first-child strong{font-size:12.5px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.editor-member-row>div:first-child small{font-size:11px;color:#9a9a94}

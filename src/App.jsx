@@ -739,7 +739,7 @@ function MainApp({ session, onLogout, onSessionUpdate, language, setLanguage }) 
   const shared = { navigate, notify, setModal, exportCsv, t, language, isEn };
   let content;
   switch (activePage) {
-    case 'reports': content = <ReportsPage reports={reports} setReports={setReports} teams={teamView} {...shared} />; break;
+    case 'reports': content = <ReportsPage reports={reports} setReports={setReports} teams={teamView} myTeam={myMember?.team || ''} {...shared} />; break;
     case 'tasks': content = <TasksPage tasks={tasks} setTasks={setTasks} teams={teams} members={activeMembers} creditPoints={creditTaskPoints} {...shared} />; break;
     case 'teams': content = <TeamsPage teams={teamView} members={activeMembers} {...shared} />; break;
     case 'members': content = <MembersPage members={members} setMembers={setMembers} teams={teams} reserves={reserves} setReserves={setReserves} transactions={transactions} tasks={tasks} {...shared} />; break;
@@ -831,11 +831,48 @@ function MainApp({ session, onLogout, onSessionUpdate, language, setLanguage }) 
       />;
     })()}
     {modal?.type === 'reportReview' && <ReportReview report={modal.data} onClose={closeModal} onApprove={() => approveReport(modal.data)} onReturn={() => returnReport(modal.data)} />}
-    {modal?.type === 'reportEditor' && <ReportEditor report={modal.data} teams={teams} onClose={closeModal} onSave={(data, submit) => {
-      if (modal.data?.id) setReports(prev => prev.map(r => r.id === modal.data.id ? { ...r, ...data, status: submit ? '审核中' : '填写中' } : r));
-      closeModal(); notify(submit ? '月报已提交，审核结果将通过站内通知告知' : '月报草稿已保存');
-      if (submit) notifyFeishu('workload.submitted', { title: '月度工作量已提交', summary: '组长提交了本月团队月报，等待审核。', fields: [['团队', modal.data?.team || data.team || '—'], ['月份', modal.data?.month || data.month || '—'], ['任务数', data.tasks ?? modal.data?.tasks ?? 0], ['状态', '待审核']] });
-    }} />}
+    {modal?.type === 'reportEditor' && <ReportEditor
+      report={modal.data}
+      teams={teams}
+      members={activeMembers}
+      tasks={tasks}
+      defaultTeam={myMember?.team || ''}
+      isEn={isEn}
+      onClose={closeModal}
+      onSave={(data, submit, extra = {}) => {
+        const reportId = modal.data?.id || `rp_${Date.now()}`;
+        const existing = reports.find(item => item.id === reportId);
+        const next = {
+          ...(existing || {}),
+          ...data,
+          id: reportId,
+          leader: myMember?.name || existing?.leader || '',
+          submitted: submit ? new Date().toLocaleDateString('zh-CN') : (existing?.submitted || ''),
+          year: new Date().getFullYear(),
+          status: submit ? '审核中' : '填写中',
+        };
+        setReports(prev => (existing ? prev.map(item => (item.id === reportId ? next : item)) : [next, ...prev]));
+        // 月报里新增的任务写回任务表，任务页立刻可见
+        if (extra.tasks?.length) {
+          setTasks(prev => [...extra.tasks.map((task, i) => ({ ...task, id: Date.now() + i })), ...prev]);
+        }
+        // 成员参与记录落到 monthly_member_records，供审核与追溯
+        if (extra.records?.length) {
+          syncTable('monthly_member_records', extra.records.map((record, i) => ({
+            id: `mmr_${reportId}_${i}`,
+            report_id: reportId,
+            member: record.name,
+            participation: record.status,
+            event_count: Number(record.events) || 0,
+            suggested_points: Number(record.points) || 0,
+            follow_up: record.followUp ? '需要跟进' : '',
+          }))).catch(() => {});
+        }
+        closeModal();
+        notify(submit ? '月报已提交，等待管理员审核' : '月报草稿已保存');
+        if (submit) notifyFeishu('workload.submitted', { title: '月度工作量已提交', summary: '组长提交了本月团队月报，等待审核。', fields: [['团队', next.team || '—'], ['月份', next.month || '—'], ['任务数', next.tasks ?? 0], ['参与成员', next.active ?? 0], ['状态', '待审核']] });
+      }}
+    />}
     {modal?.type === 'memberDetail' && (() => {
       // 始终渲染最新的成员对象：编辑或飞书同步后，档案弹窗立即反映新数据。
       const liveMember = members.find(m => m.id === modal.data.id) || modal.data;
@@ -957,7 +994,7 @@ function Dashboard({ teams, reports, tasks, members, transactions, monthlyTrend 
   </div>;
 }
 
-function ReportsPage({ reports, setReports, teams, navigate, setModal, notify, exportCsv, t, isEn, language }) {
+function ReportsPage({ reports, setReports, teams, myTeam = '', navigate, setModal, notify, exportCsv, t, isEn, language }) {
   const [filter, setFilter] = useState('全部');
   const [sending, setSending] = useState(false);
   // 「提醒未提交组长」：调用服务端通过飞书单聊真实发送，结果按实际送达数量提示。
@@ -995,7 +1032,7 @@ function ReportsPage({ reports, setReports, teams, navigate, setModal, notify, e
   const totalPoints = reports.reduce((sum, r) => sum + (Number(r.points) || 0), 0);
   const notSubmittedCount = Math.max(0, teamCount - reports.length);
   return <div className="page">
-    <PageTitle title={t('reportsTitle')} subtitle={t('reportsSubtitle')} actions={<><Button variant="secondary" icon={Download} onClick={() => exportCsv(isEn ? 'Monthly Team Reports' : '月度团队报告')}>{t('exportReports')}</Button><Button icon={Plus} onClick={() => setModal({ type: 'reportEditor', data: reports.find(r => r.status === '填写中') })}>{t('fillMonthlyReport')}</Button></>} />
+    <PageTitle title={t('reportsTitle')} subtitle={t('reportsSubtitle')} actions={<><Button variant="secondary" icon={Download} onClick={() => exportCsv(isEn ? 'Monthly Team Reports' : '月度团队报告')}>{t('exportReports')}</Button><Button icon={Plus} onClick={() => setModal({ type: 'reportEditor', data: reports.find(r => myTeam && r.team === myTeam && ['填写中', '未开始', '待修改'].includes(r.status)) || reports.find(r => r.status === '填写中') || null })}>{t('fillMonthlyReport')}</Button></>} />
     <div className="report-month-banner"><div className="month-calendar"><span>{now.toLocaleDateString('en-US', { month: 'short' }).toUpperCase()}</span><strong>{String(now.getDate()).padStart(2, '0')}</strong></div><div><h3>{t('reportCycle')}</h3><p>{t('reportPeriod')}</p></div><div className="month-banner-stat"><span>{t('submitted')}</span><strong>{submittedCount}<small>{isEn ? ` / ${teamCount} teams` : ` / ${teamCount} 团队`}</small></strong></div><div className="month-banner-stat"><span>{t('daysUntilDeadline')}</span><strong>{daysLeft}<small>{isEn ? ' days' : ' 天'}</small></strong></div><Button variant="light" onClick={remindLeaders} disabled={sending}>{sending ? (isEn ? 'Sending…' : '发送中…') : t('remindLeaders')}<Send size={15} /></Button></div>
     <div className="metrics-grid compact"><MiniStat label={t('pendingReports')} value={String(pendingCount)} suffix={isEn ? 'reports' : '份'} icon={ClipboardCheck} tone="amber" note={isEn ? 'Review within 3 working days' : '请在 3 个工作日内完成审核'} /><MiniStat label={t('approvedReports')} value={String(approvedCount)} suffix={isEn ? 'reports' : '份'} icon={CircleCheck} tone="green" note={isEn ? 'Approved this month' : '本月已通过'} /><MiniStat label={t('teamWorkload')} value={totalHours.toLocaleString()} suffix={isEn ? 'hrs' : '小时'} icon={Clock3} tone="blue" note={isEn ? 'From submitted reports' : '来自已提交月报'} /><MiniStat label={t('suggestedPoints')} value={String(totalPoints)} suffix={isEn ? 'pts' : '分'} icon={Coins} note={isEn ? 'Credited after review' : '审核通过后由管理员入账'} /></div>
     <div className="card table-card">
@@ -1774,20 +1811,248 @@ function ReportReview({ report, onClose, onApprove, onReturn }) {
 
 function ReviewSection({ title, text }) { return <div className="review-section"><h3>{title}</h3><p>{text}</p></div>; }
 
-function ReportEditor({ report, teams, onClose, onSave }) {
+function ReportEditor({ report, teams = [], members = [], tasks = [], defaultTeam = '', onClose, onSave, isEn }) {
+  const L = (zh, en) => (isEn ? en : zh);
+  const now = new Date();
+  const monthLabel = report?.month || `${now.getFullYear()}年${now.getMonth() + 1}月`;
+  const monthNumber = Number(String(monthLabel).match(/(\d{1,2})\s*月/)?.[1]) || now.getMonth() + 1;
+  const initialTeam = report?.team || defaultTeam || teams[0]?.name || '';
+
   const [step, setStep] = useState(1);
-  const [form, setForm] = useState({ team: report?.team || '内容策划组', summary: report?.summary || '', goal: report?.goal || '', next: report?.next || '', unfinished: '', support: '' });
-  const [records, setRecords] = useState(initialMembers.slice(0, 5).map((m, i) => ({ name: m.name, status: i < 3 ? '活跃' : '正常', points: [12, 10, 8, 6, 5][i], note: '' })));
+  const [form, setForm] = useState({
+    team: initialTeam,
+    month: monthLabel,
+    summary: report?.summary || '',
+    goal: report?.goal || '',
+    next: report?.next || '',
+    unfinished: '',
+    support: '',
+    praise: report?.praised_member || '',
+    crossTeam: '',
+    suggestion: '',
+  });
   const update = (key, value) => setForm(prev => ({ ...prev, [key]: value }));
-  const steps = [['团队工作总结', FileText], ['任务清单', CheckSquare], ['成员参与情况', Users], ['团队总结与提交', ClipboardCheck]];
-  return <Modal title={`${form.team} · 11 月月报`} subtitle="草稿已自动保存 · 截止至 11月15日 23:59" onClose={onClose} size="full" footer={<><Button variant="secondary" icon={Save} onClick={() => onSave(form, false)}>保存草稿</Button><div className="editor-footer-right">{step > 1 && <Button variant="secondary" onClick={() => step > 1 && setStep(step - 1)}>上一步</Button>}{step < 4 ? <Button onClick={() => setStep(step + 1)}>下一步<ChevronRight size={15} /></Button> : <Button icon={Send} onClick={() => onSave(form, true)}>确认提交月报</Button>}</div></>}>
-    <div className="report-editor-layout"><aside className="editor-steps">{steps.map(([label, Icon], i) => <button key={label} className={step === i + 1 ? 'active' : step > i + 1 ? 'done' : ''} onClick={() => setStep(i + 1)}><span>{step > i + 1 ? <Check size={16} /> : <Icon size={17} />}</span><div><small>第 {i + 1} 部分</small><strong>{label}</strong></div></button>)}<div className="editor-tip"><Info size={17} /><p>提交前请确认所有成员参与记录完整。审核通过后，月报与积分将正式归档。</p></div></aside><div className="editor-form">
-      {step === 1 && <><div className="editor-section-title"><span>01</span><div><h2>团队整体工作情况</h2><p>简要记录团队本月最重要的工作与下一步计划。</p></div></div><div className="form-grid"><Field label="所属月份"><input value="2026 年 11 月" disabled /></Field><Field label="所属团队"><select value={form.team} onChange={e => update('team', e.target.value)}>{teams.map(t => <option key={t.id}>{t.name}</option>)}</select></Field><Field label="本月工作总结" required full><textarea rows="4" value={form.summary} onChange={e => update('summary', e.target.value)} placeholder="概述本月团队的主要工作、成果和进展…" /><span className="word-count">{form.summary.length} / 1000</span></Field><Field label="本月核心目标" required full><textarea rows="3" value={form.goal} onChange={e => update('goal', e.target.value)} placeholder="本月最重要的目标是什么？完成情况如何？" /></Field><Field label="本月未完成事项" full><textarea rows="3" value={form.unfinished} onChange={e => update('unfinished', e.target.value)} placeholder="如有未完成事项，请说明原因与当前状态（选填）" /></Field><Field label="下月工作计划" required full><textarea rows="3" value={form.next} onChange={e => update('next', e.target.value)} placeholder="列出下月最重要的工作计划…" /></Field><Field label="需要其他团队支持的事项" full><textarea rows="2" value={form.support} onChange={e => update('support', e.target.value)} placeholder="明确需要的支持与协作团队（选填）" /></Field></div></>}
-      {step === 2 && <><div className="editor-section-title"><span>02</span><div><h2>团队任务清单</h2><p>已自动汇总本月团队任务，可继续补充任务与交付成果。</p></div></div><div className="editor-task-summary"><div><strong>18</strong><span>本月任务</span></div><div><strong>15</strong><span>已完成</span></div><div><strong>126h</strong><span>累计工作量</span></div><Button variant="secondary" icon={Plus}>添加任务</Button></div><div className="editor-task-list">{initialTasks.slice(0, 4).map((t, i) => <div key={t.id}><span className={`task-check ${i < 2 ? 'checked' : ''}`}>{i < 2 && <Check size={13} />}</span><div><strong>{t.title}</strong><p>{t.type} · {t.owner} 负责 · {t.due} 截止</p></div><StatusBadge>{i < 2 ? '已完成' : '进行中'}</StatusBadge><button className="icon-button"><Pencil size={16} /></button></div>)}</div></>}
-      {step === 3 && <><div className="editor-section-title"><span>03</span><div><h2>组员月度参与情况</h2><p>登记每位成员的实际参与，不建议单纯按工作时长计分。</p></div></div><div className="batch-actions"><span>已登记 5 / 5 位成员</span><Button variant="secondary" onClick={() => setRecords(prev => prev.map(r => ({ ...r, status: '正常' })))}>批量设为正常参与</Button></div><div className="editor-member-table"><div className="editor-member-head"><span>成员</span><span>参与状态</span><span>参与活动次数</span><span>建议积分</span><span>是否需要跟进</span></div>{records.map((r, i) => <div className="editor-member-row" key={r.name}><div><Avatar name={r.name} size="sm" /><strong>{r.name}</strong></div><select value={r.status} onChange={e => setRecords(prev => prev.map((x, j) => j === i ? { ...x, status: e.target.value } : x))}><option>活跃</option><option>正常</option><option>低频</option><option>暂未参与</option></select><input type="number" defaultValue={i + 1} min="0" /><div className="suggested-points"><input type="number" value={r.points} onChange={e => setRecords(prev => prev.map((x, j) => j === i ? { ...x, points: Number(e.target.value) } : x))} /><span>分</span><button title="查看积分计算明细"><Info size={14} /></button></div><button className={`toggle ${i === 4 ? 'on' : ''}`}><i /></button></div>)}</div><div className="points-calculation-note"><Info size={16} /><span>建议积分由任务记录和当前积分规则自动计算。组长可提出调整建议，最终积分以管理员审核结果为准。</span></div></>}
-      {step === 4 && <><div className="editor-section-title"><span>04</span><div><h2>团队总结与协作评价</h2><p>记录数据之外，那些同样重要的团队故事。</p></div></div><div className="form-grid"><Field label="本月团队最重要的成果" required full><textarea rows="3" defaultValue={form.summary} placeholder="本月最值得记录的团队成果…" /></Field><Field label="最值得肯定的成员及原因" full><textarea rows="3" placeholder="认可具体的人与具体的贡献…" /></Field><Field label="本月跨组合作情况" full><textarea rows="3" placeholder="记录与其他团队协作的事项与成果…" /></Field><Field label="对团队管理组的建议" full><textarea rows="3" placeholder="有哪些支持能让团队更好地工作？（选填）" /></Field></div><div className="submit-checklist"><h3><CircleCheck size={18} />提交前检查</h3><div><Check size={15} />团队工作总结已填写</div><div><Check size={15} />本月任务与成果已关联</div><div><Check size={15} />全部成员参与情况已登记</div><div><Check size={15} />建议积分已确认</div></div></>}
-    </div></div>
-  </Modal>;
+
+  // 组员：按当前团队自动带出（组长打开就能看到本组全部在编成员）
+  const teamMembers = useMemo(() => members.filter(m => m.team === form.team), [members, form.team]);
+  const [recordEdits, setRecordEdits] = useState({});
+  const records = teamMembers.map(m => ({
+    name: m.name,
+    role: m.role,
+    status: '正常',
+    events: '',
+    points: '',
+    followUp: false,
+    ...(recordEdits[m.name] || {}),
+  }));
+  const setRecord = (name, patch) => setRecordEdits(prev => ({ ...prev, [name]: { ...(prev[name] || {}), ...patch } }));
+
+  // 任务：自动汇总本组真实任务 + 本次月报中新增的任务
+  const [addedTasks, setAddedTasks] = useState([]);
+  const [showTaskForm, setShowTaskForm] = useState(false);
+  const [taskDraft, setTaskDraft] = useState({ title: '', owner: '', due: '', points: '0', type: '活动策划', status: '已完成' });
+  const teamTasks = useMemo(() => tasks.filter(t => t.team === form.team), [tasks, form.team]);
+  const allTasks = [...teamTasks, ...addedTasks];
+  const stats = {
+    total: allTasks.length,
+    done: allTasks.filter(t => t.status === '已完成').length,
+    hours: Math.round(allTasks.reduce((s, t) => s + (Number(t.hours) || 0), 0)),
+  };
+  const addTask = () => {
+    if (!taskDraft.title.trim()) return;
+    setAddedTasks(prev => [...prev, {
+      id: `draft_${Date.now()}`,
+      title: taskDraft.title.trim(),
+      project: monthLabel,
+      team: form.team,
+      type: taskDraft.type,
+      owner: taskDraft.owner || '',
+      due: taskDraft.due || '',
+      status: taskDraft.status,
+      priority: '普通',
+      progress: 0,
+      hours: 0,
+      points: Number(taskDraft.points) || 0,
+      collaborators: taskDraft.owner ? [taskDraft.owner] : [],
+    }]);
+    setTaskDraft({ title: '', owner: '', due: '', points: '0', type: '活动策划', status: '已完成' });
+  };
+  const removeTask = id => setAddedTasks(prev => prev.filter(t => t.id !== id));
+
+  const activeCount = records.filter(r => r.status !== '暂未参与').length;
+  const suggestedPoints = records.reduce((s, r) => s + (Number(r.points) || 0), 0);
+  const steps = [
+    ['团队工作总结', FileText],
+    ['任务清单', CheckSquare],
+    ['成员参与情况', Users],
+    ['团队总结与提交', ClipboardCheck],
+  ];
+
+  const submitSave = submit => {
+    const payload = {
+      ...form,
+      tasks: stats.total,
+      hours: stats.hours,
+      active: activeCount,
+      points: suggestedPoints,
+      praised_member: form.praise || '',
+      status: submit ? '审核中' : '填写中',
+    };
+    onSave(payload, submit, {
+      // 只把本次新增的任务写回任务表，已有任务不重复创建
+      tasks: addedTasks,
+      records: records
+        .filter(r => r.status !== '暂未参与' || Number(r.points) > 0 || r.followUp)
+        .map(r => ({ ...r, points: Number(r.points) || 0, events: Number(r.events) || 0 })),
+    });
+  };
+
+  return (
+    <Modal
+      title={`${form.team || L('未选择团队', 'No team')} · ${monthNumber} 月月报`}
+      subtitle={L('填写完成后提交，管理员审核结果会通过飞书通知', 'Submit when ready — review results are sent via Feishu')}
+      onClose={onClose}
+      size="full"
+      footer={<>
+        <Button variant="secondary" icon={Save} onClick={() => submitSave(false)}>{L('保存草稿', 'Save draft')}</Button>
+        <div className="editor-footer-right">
+          {step > 1 && <Button variant="secondary" onClick={() => setStep(step - 1)}>{L('上一步', 'Back')}</Button>}
+          {step < 4
+            ? <Button onClick={() => setStep(step + 1)}>{L('下一步', 'Next')}<ChevronRight size={15} /></Button>
+            : <Button icon={Send} onClick={() => submitSave(true)}>{L('确认提交月报', 'Submit report')}</Button>}
+        </div>
+      </>}
+    >
+      <div className="report-editor-layout">
+        <aside className="editor-steps">
+          {steps.map(([label, Icon], i) => (
+            <button key={label} className={step === i + 1 ? 'active' : step > i + 1 ? 'done' : ''} onClick={() => setStep(i + 1)}>
+              <span>{step > i + 1 ? <Check size={16} /> : <Icon size={17} />}</span>
+              <div><small>{L(`第 ${i + 1} 部分`, `Part ${i + 1}`)}</small><strong>{L(label, ['Team summary', 'Task list', 'Member participation', 'Summary & submit'][i])}</strong></div>
+            </button>
+          ))}
+          <div className="editor-tip"><Info size={17} /><p>{L('组员名单按团队自动带出，请核对参与情况后再提交。', 'Members are loaded from the team automatically — review participation before submitting.')}</p></div>
+        </aside>
+
+        <div className="editor-form">
+          {step === 1 && <>
+            <div className="editor-section-title"><span>01</span><div><h2>{L('团队整体工作情况', 'Team overview')}</h2><p>{L('简要记录团队本月最重要的工作与下一步计划。', 'The most important work this month and the plan ahead.')}</p></div></div>
+            <div className="form-grid">
+              <Field label={L('所属月份', 'Month')}><input value={form.month} onChange={e => update('month', e.target.value)} /></Field>
+              <Field label={L('所属团队', 'Team')} required>
+                <select value={form.team} onChange={e => update('team', e.target.value)}>
+                  {!teams.some(team => team.name === form.team) && form.team ? <option value={form.team}>{form.team}</option> : null}
+                  {teams.map(team => <option key={team.id} value={team.name}>{team.name}</option>)}
+                </select>
+              </Field>
+              <Field label={L('本月工作总结', 'Summary')} required full>
+                <textarea rows="4" value={form.summary} onChange={e => update('summary', e.target.value)} placeholder={L('概述本月团队的主要工作、成果和进展…', 'What the team did this month…')} />
+                <span className="word-count">{form.summary.length} / 1000</span>
+              </Field>
+              <Field label={L('本月核心目标', 'Key goals')} required full><textarea rows="3" value={form.goal} onChange={e => update('goal', e.target.value)} placeholder={L('本月最重要的目标是什么？完成情况如何？', 'The most important goals and how they went')} /></Field>
+              <Field label={L('本月未完成事项', 'Unfinished')} full><textarea rows="3" value={form.unfinished} onChange={e => update('unfinished', e.target.value)} placeholder={L('如有未完成事项，请说明原因与当前状态（选填）', 'Optional')} /></Field>
+              <Field label={L('下月工作计划', 'Next month')} required full><textarea rows="3" value={form.next} onChange={e => update('next', e.target.value)} placeholder={L('列出下月最重要的工作计划…', 'Plans for next month…')} /></Field>
+              <Field label={L('需要其他团队支持的事项', 'Support needed')} full><textarea rows="2" value={form.support} onChange={e => update('support', e.target.value)} placeholder={L('明确需要的支持与协作团队（选填）', 'Optional')} /></Field>
+            </div>
+          </>}
+
+          {step === 2 && <>
+            <div className="editor-section-title"><span>02</span><div><h2>{L('团队任务清单', 'Task list')}</h2><p>{L('自动汇总本组任务，可继续补充本月完成的任务与交付成果。', 'Tasks of this team are listed automatically — add any missing ones.')}</p></div></div>
+            <div className="editor-task-summary">
+              <div><strong>{stats.total}</strong><span>{L('本月任务', 'Tasks')}</span></div>
+              <div><strong>{stats.done}</strong><span>{L('已完成', 'Completed')}</span></div>
+              <div><strong>{stats.hours}h</strong><span>{L('累计工作量', 'Workload')}</span></div>
+              <Button variant="secondary" icon={Plus} onClick={() => setShowTaskForm(v => !v)}>{L('添加任务', 'Add task')}</Button>
+            </div>
+
+            {showTaskForm && (
+              <div className="editor-task-form">
+                <input autoFocus value={taskDraft.title} onChange={e => setTaskDraft(prev => ({ ...prev, title: e.target.value }))} placeholder={L('任务名称，例如：完成大会主视觉终稿', 'Task title')} />
+                <select value={taskDraft.owner} onChange={e => setTaskDraft(prev => ({ ...prev, owner: e.target.value }))}>
+                  <option value="">{L('负责人（可选）', 'Owner (optional)')}</option>
+                  {teamMembers.map(m => <option key={m.id} value={m.name}>{m.name}</option>)}
+                </select>
+                <input type="date" value={taskDraft.due} onChange={e => setTaskDraft(prev => ({ ...prev, due: e.target.value ? `${e.target.value.slice(5, 7)}月${e.target.value.slice(8, 10)}日` : '' }))} />
+                <select value={taskDraft.status} onChange={e => setTaskDraft(prev => ({ ...prev, status: e.target.value }))}>
+                  {['已完成', '进行中'].map(option => <option key={option} value={option}>{displayValue(option, isEn ? 'en' : 'zh')}</option>)}
+                </select>
+                <div className="number-input editor-task-points">
+                  <input type="text" inputMode="numeric" placeholder="0" value={taskDraft.points} onChange={e => setTaskDraft(prev => ({ ...prev, points: e.target.value.replace(/[^\d]/g, '').replace(/^0+(?=\d)/, '').slice(0, 3) }))} />
+                  <span>{L('分', 'pts')}</span>
+                </div>
+                <Button icon={Check} onClick={addTask} disabled={!taskDraft.title.trim()}>{L('加入清单', 'Add')}</Button>
+              </div>
+            )}
+
+            <div className="editor-task-list">
+              {allTasks.length ? allTasks.map(t => (
+                <div key={t.id}>
+                  <span className={`task-check ${t.status === '已完成' ? 'checked' : ''}`}>{t.status === '已完成' && <Check size={13} />}</span>
+                  <div>
+                    <strong>{t.title}</strong>
+                    <p>{t.type || L('任务', 'Task')} · {t.owner || L('未指派', 'Unassigned')} · {t.due || L('无截止日期', 'No due date')}{Number(t.points) > 0 ? ` · ${t.points} ${L('分', 'pts')}` : ''}</p>
+                  </div>
+                  <StatusBadge>{t.status || '进行中'}</StatusBadge>
+                  {String(t.id).startsWith('draft_')
+                    ? <button className="icon-button" title={L('移除', 'Remove')} onClick={() => removeTask(t.id)}><Trash2 size={15} /></button>
+                    : <span />}
+                </div>
+              )) : <EmptyState title={L('该团队还没有任务', 'No tasks yet')} description={L('点击「添加任务」补录本月已完成的工作。', 'Use “Add task” to record what the team did.')} />}
+            </div>
+          </>}
+
+          {step === 3 && <>
+            <div className="editor-section-title"><span>03</span><div><h2>{L('组员月度参与情况', 'Member participation')}</h2><p>{L('名单按团队自动带出，逐位填写参与情况与建议积分。', 'Members are listed from the team — fill in participation and suggested points.')}</p></div></div>
+            {teamMembers.length ? <>
+              <div className="batch-actions">
+                <span>{L(`已带出 ${teamMembers.length} 位在编成员 · 已登记 ${records.filter(r => r.status !== '暂未参与').length} 位`, `${teamMembers.length} members · ${records.filter(r => r.status !== '暂未参与').length} recorded`)}</span>
+                <Button variant="secondary" onClick={() => setRecordEdits(prev => {
+                  const next = { ...prev };
+                  teamMembers.forEach(m => { next[m.name] = { ...(next[m.name] || {}), status: '正常' }; });
+                  return next;
+                })}>{L('批量设为正常参与', 'Mark all as normal')}</Button>
+              </div>
+              <div className="editor-member-table">
+                <div className="editor-member-head"><span>{L('成员', 'Member')}</span><span>{L('参与状态', 'Status')}</span><span>{L('参与活动次数', 'Events')}</span><span>{L('建议积分', 'Points')}</span><span>{L('是否需要跟进', 'Follow-up')}</span></div>
+                {records.map(r => (
+                  <div className="editor-member-row" key={r.name}>
+                    <div><Avatar name={r.name} size="sm" /><div><strong>{r.name}</strong><small>{r.role === '组长' ? L('组长', 'Lead') : L('成员', 'Member')}</small></div></div>
+                    <select value={r.status} onChange={e => setRecord(r.name, { status: e.target.value })}>
+                      {['活跃', '正常', '低频', '暂未参与'].map(option => <option key={option} value={option}>{displayValue(option, isEn ? 'en' : 'zh')}</option>)}
+                    </select>
+                    <input type="text" inputMode="numeric" placeholder="0" value={r.events} onChange={e => setRecord(r.name, { events: e.target.value.replace(/[^\d]/g, '').slice(0, 3) })} />
+                    <div className="suggested-points">
+                      <input type="text" inputMode="numeric" placeholder="0" value={r.points} onChange={e => setRecord(r.name, { points: e.target.value.replace(/[^\d]/g, '').replace(/^0+(?=\d)/, '').slice(0, 3) })} />
+                      <span>{L('分', 'pts')}</span>
+                    </div>
+                    <button type="button" className={`toggle ${r.followUp ? 'on' : ''}`} onClick={() => setRecord(r.name, { followUp: !r.followUp })} aria-label="follow-up"><i /></button>
+                  </div>
+                ))}
+              </div>
+              <div className="points-calculation-note"><Info size={16} /><span>{L('建议积分为本月手工登记的参考值，最终以管理员审核入账为准；审核通过后会通过飞书通知本人。', 'Suggested points are reviewed by an admin; members are notified via Feishu once credited.')}</span></div>
+            </> : <EmptyState title={L('该团队暂无在编成员', 'No active members in this team')} description={L('请先在「成员管理」中把成员归入该团队，或同步飞书通讯录。', 'Assign members to this team or sync the Feishu directory first.')} />}
+          </>}
+
+          {step === 4 && <>
+            <div className="editor-section-title"><span>04</span><div><h2>{L('团队总结与协作评价', 'Summary & collaboration')}</h2><p>{L('记录数据之外，那些同样重要的团队故事。', 'The stories behind the numbers.')}</p></div></div>
+            <div className="form-grid">
+              <Field label={L('本月团队最重要的成果', 'Key achievement')} required full><textarea rows="3" value={form.summary} onChange={e => update('summary', e.target.value)} placeholder={L('本月最值得记录的团队成果…', 'The achievement worth recording')} /></Field>
+              <Field label={L('最值得肯定的成员及原因', 'Member to praise')} full><textarea rows="3" value={form.praise} onChange={e => update('praise', e.target.value)} placeholder={L('认可具体的人与具体的贡献…', 'Name the person and the contribution')} /></Field>
+              <Field label={L('本月跨组合作情况', 'Cross-team work')} full><textarea rows="3" value={form.crossTeam} onChange={e => update('crossTeam', e.target.value)} placeholder={L('记录与其他团队协作的事项与成果…', 'What you did with other teams')} /></Field>
+              <Field label={L('对团队管理组的建议', 'Suggestions')} full><textarea rows="3" value={form.suggestion} onChange={e => update('suggestion', e.target.value)} placeholder={L('有哪些支持能让团队更好地工作？（选填）', 'Optional')} /></Field>
+            </div>
+            <div className="submit-checklist">
+              <h3><CircleCheck size={18} />{L('提交前检查', 'Before submitting')}</h3>
+              <div>{form.summary.trim() ? <Check size={15} /> : <CircleAlert size={15} />}{L('团队工作总结已填写', 'Team summary filled')}</div>
+              <div>{stats.total ? <Check size={15} /> : <CircleAlert size={15} />}{L(`任务清单 ${stats.total} 项，已完成 ${stats.done} 项`, `${stats.total} tasks, ${stats.done} completed`)}</div>
+              <div>{records.length ? <Check size={15} /> : <CircleAlert size={15} />}{L(`成员参与情况：${records.length} 位成员，建议积分合计 ${suggestedPoints} 分`, `${records.length} members, ${suggestedPoints} pts suggested`)}</div>
+              <div>{form.next.trim() ? <Check size={15} /> : <CircleAlert size={15} />}{L('下月工作计划已填写', 'Next month plan filled')}</div>
+            </div>
+          </>}
+        </div>
+      </div>
+    </Modal>
+  );
 }
 
 function txYmd(d) { return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`; }
