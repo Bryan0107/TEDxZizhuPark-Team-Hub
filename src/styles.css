@@ -557,3 +557,13 @@ input[type=number]{-moz-appearance:textfield;appearance:textfield}
 .editor-member-row>div:first-child>div{display:flex;flex-direction:column;min-width:0}
 .editor-member-row>div:first-child strong{font-size:12.5px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .editor-member-row>div:first-child small{font-size:11px;color:#9a9a94}
+
+/* ==== 静态年度标签 / 通知渠道行 ==== */
+.static-year{display:inline-flex;align-items:center;gap:6px;height:34px;padding:0 12px;border:1px solid #e6e6e1;border-radius:7px;background:#fafaf8;color:#6f6f69;font-size:13px;white-space:nowrap}
+.year-switch.static{cursor:default}
+.channel-row{display:flex;align-items:center;justify-content:space-between;gap:14px;padding:14px 2px;border-top:1px solid var(--line)}
+.channel-row strong{font-size:13.5px}
+.channel-row p{font-size:12px;color:#8a8a84;margin-top:4px;line-height:1.6}
+
+/* 下拉筛选：补上原生箭头，避免看起来像个文本框 */
+.toolbar-right .select-field{appearance:none;-webkit-appearance:none;background-image:url("data:image/svg+xml;charset=utf-8,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='12' viewBox='0 0 24 24' fill='none' stroke='%238a8a84' stroke-width='2.4' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpolyline points='6 9 12 15 18 9'/%3E%3C/svg%3E");background-repeat:no-repeat;background-position:right 9px center;padding-right:26px}
