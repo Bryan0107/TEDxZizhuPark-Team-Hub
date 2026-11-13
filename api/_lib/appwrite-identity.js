@@ -90,6 +90,19 @@ export async function issueAppwriteSession(userId) {
   return res.data?.secret || '';
 }
 
+/** 校验会话密钥是否仍然有效（会话被删/过期时返回 false）。 */
+export async function appwriteSessionValid(secret) {
+  if (!secret) return false;
+  try {
+    const res = await fetch(`${ENDPOINT}/account`, {
+      headers: { 'X-Appwrite-Project': PROJECT, 'X-Appwrite-Session': secret },
+    });
+    return res.ok;
+  } catch {
+    return false;
+  }
+}
+
 /** 一步到位：成员 → Appwrite 账号 → 会话密钥。失败返回空串，不阻塞登录。 */
 export async function ensureSessionForMember(member) {
   const userId = await ensureAppwriteUser(member);

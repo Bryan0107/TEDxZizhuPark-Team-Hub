@@ -52,11 +52,20 @@ tedxzizhupark/
 | Project ID | `6af1211f00086491c07c` |
 | 区域 / 端点 | `sgp` → `https://sgp.cloud.appwrite.io/v1` |
 | 数据库 | `tedx_team_hub` |
-| 表（20） | `teams`、`members`、`team_members`、`users`、`tasks`、`task_members`、`reports`、`monthly_member_records`、`points_rules`、`points_transactions`、`report_reviews`、`audit_logs`、`app_settings`、`reserve_volunteers`、`terms`、`term_teams`、`member_terms`、`historical_sources`、`legacy_assets`、`member_stories` |
+| 表（25） | `teams`、`members`、`team_members`、`users`、`tasks`、`task_members`、`reports`、`monthly_member_records`、`points_rules`、`points_transactions`、`report_reviews`、`audit_logs`、`app_settings`、`reserve_volunteers`、`terms`、`term_teams`、`member_terms`、`historical_sources`、`legacy_assets`、`member_stories`、`departments`、`feishu_integrations`、`feishu_sync_logs`、`feishu_event_logs`、`notification_logs` |
 | Web 平台 | `localhost`、`127.0.0.1`、`*.vercel.app`（免费档上限 3 个） |
-| 认证 | Appwrite Auth（email / password），角色存于 user prefs |
+| 认证 | 双通道：飞书 OAuth（服务端 JWT Cookie）+ Appwrite 邮箱密码；角色存 `users` 表与账号 prefs |
 
 **区域端点是关键**：项目在 sgp，用全局端点 `https://cloud.appwrite.io/v1` 会得到 `401 Project is not accessible in this region`。
+
+### 数据权限与登录身份（2026-11-13 起）
+
+表权限已从 `Any` 全部收敛为 `Users`（纪念馆公开页依赖的 7 张表保留 `read("any")`）。
+
+- **飞书登录**：浏览器在 Appwrite 侧原本是匿名身份，收紧权限后会读不到数据。现在 `api/_lib/appwrite-identity.js` 会用服务端 API Key 为每位成员开通 Appwrite 账号（无邮箱者使用 `feishu.<openid>@teamhub.local` 占位），签发会话密钥，随 `/api/session` 下发，前端 `Client.setSession()` 后即具备 `users` 角色。密钥存在 HttpOnly Cookie `th_aws`（30 天），每次启动校验，失效自动重签。
+- **新增成员无需手工建账号**：首次登录时自动开通，Appwrite 控制台 Users 里会出现 `u_<成员ID>`。
+- **批量调整权限**：`node --env-file=.env.local scripts/tighten-permissions.mjs`（预览）/ `--apply`（执行）。改完务必用匿名请求复测，确认返回 401。
+- **纪念馆寄语**：公开页无账号，投稿走 `POST /api/hall/story`（服务端代写、10–2000 字、单 IP 每小时 5 条、待审核入库），不要再改回浏览器直写。
 
 ### 开通新成员账号（管理员）
 

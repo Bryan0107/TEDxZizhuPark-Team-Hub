@@ -11,7 +11,7 @@ import {
   readAppwriteSessionSecret, setAppwriteSessionCookie, clearAppwriteSessionCookie,
 } from './_lib/session.js';
 import { findOne } from './_lib/store.js';
-import { ensureSessionForMember, identityReady } from './_lib/appwrite-identity.js';
+import { ensureSessionForMember, appwriteSessionValid, identityReady } from './_lib/appwrite-identity.js';
 
 export default async function handler(req, res) {
   res.setHeader('Cache-Control', 'no-store');
@@ -25,9 +25,17 @@ export default async function handler(req, res) {
   const session = readSession(req);
   if (!session) return res.status(200).json({ ok: true, session: null });
 
+  // 成员状态复核与 Appwrite 密钥校验互不依赖，并发执行省掉一次往返。
+  const [member, validSecret] = await Promise.all([
+    findOne('members', '$id', session.sub).catch(() => null),
+    (async () => {
+      const secret = readAppwriteSessionSecret(req);
+      if (!secret) return '';
+      return (await appwriteSessionValid(secret)) ? secret : '';
+    })(),
+  ]);
+
   // 会话签发后成员状态可能变化（如被转为 Alumni），每次读取都复核一次。
-  let member = null;
-  try { member = await findOne('members', '$id', session.sub); } catch { /* 数据库不可用时沿用会话信息 */ }
   if (member) {
     const status = String(member.member_status || 'active').toLowerCase();
     if (status === 'alumni' || status === 'inactive' || member.is_login_enabled === false) {
@@ -37,8 +45,8 @@ export default async function handler(req, res) {
     }
   }
 
-  // Appwrite 会话密钥：有 Cookie 就复用，没有就现场开通（每位用户 30 天内只开一次）。
-  let appwriteSession = readAppwriteSessionSecret(req);
+  // Appwrite 会话密钥：有效就复用，失效或缺失就现场开通。
+  let appwriteSession = validSecret;
   if (!appwriteSession && identityReady()) {
     appwriteSession = await ensureSessionForMember({
       id: session.sub,
