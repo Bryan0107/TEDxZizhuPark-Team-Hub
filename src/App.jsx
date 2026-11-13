@@ -638,8 +638,6 @@ function LoginPage({ onLogin, language, setLanguage }) {
       <main className="login-wf-main">
         <div className="login-wf-copy">
           <h1>Ideas change<br />everything<span>.</span></h1>
-          <p>{isEn ? 'Ten years of ideas, people and stages — collected in one archive.' : '十年，一群人，把想法变成现场。这些影像来自 Team Hub 的十周年档案库。'}</p>
-          <div className="login-wf-count"><strong>{storyPhotos.length}</strong><span>{isEn ? 'moments from the archive' : '张影像正在流动'}</span></div>
         </div>
         <div className="login-wf-card">
           <form className="login-form" onSubmit={submit}>{formBody}</form>
