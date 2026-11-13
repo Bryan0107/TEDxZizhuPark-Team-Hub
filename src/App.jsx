@@ -614,10 +614,14 @@ function LoginPage({ onLogin, language, setLanguage }) {
   if (useWaterfall) {
     const ratios = ['4 / 5', '1 / 1', '3 / 4', '4 / 3', '5 / 4'];
     const durations = [92, 116, 84, 104, 96, 108];
-    const columns = Array.from({ length: 6 }, (_, c) => storyPhotos.filter((_, i) => i % 6 === c))
-      .filter(col => col.length)
-      // 每列补足高度：照片少时重复排列，保证循环时不会露出背景
-      .map(col => Array.from({ length: Math.max(3, Math.ceil(10 / col.length)) }, (_, k) => col[k % col.length]));
+    // 固定六列（窄屏用 CSS 隐藏多余列）；每列对照片做轮转排列，
+    // 这样照片很少时也不会塌成两三列把砖块撑得很大。
+    const columns = Array.from({ length: 6 }, (_, c) => {
+      const rotated = storyPhotos.map((_, k) => storyPhotos[(c + k) % storyPhotos.length]);
+      const tiles = [];
+      while (tiles.length < 8) tiles.push(...rotated);
+      return tiles;
+    });
     return <div className="login-wf">
       <div className="login-wf-bg" aria-hidden="true">
         {columns.map((col, c) => <div key={c} className={`login-wf-col ${c % 2 ? 'rev' : ''}`} style={{ '--wf-dur': `${durations[c % durations.length]}s`, '--wf-delay': `-${c * 9}s` }}>
