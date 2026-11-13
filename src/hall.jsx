@@ -2,7 +2,7 @@ import React, { useEffect, useMemo, useRef, useState } from 'react';
 import {
   ArrowLeft, ArrowRight, ArrowUpRight, CalendarDays, MapPin, Users, Sparkles, Clock3,
   Search, Globe2, Download, Copy, Check, ExternalLink, ChevronRight, Quote, Camera,
-  MessageSquare, ShieldCheck, BookOpen, Heart, Link2, Image as ImageIcon,
+  MessageSquare, ShieldCheck, BookOpen, Heart, Link2, Image as ImageIcon, Upload, Trash2, Eye, EyeOff,
 } from 'lucide-react';
 import { fetchTable, saveRow } from './api';
 
@@ -422,6 +422,176 @@ export default function HallOfHonor({ onExit }) {
 }
 
 /* ---------------- Internal admin ---------------- */
+/**
+ * 十周年影像档案：一处上传，两处生效
+ * - 登录页瀑布流（仅 public）
+ * - 纪念馆「十年记忆馆 → 活动影像」（hall.jsx 的 HallArchive 直接读 legacy_assets）
+ */
+function HallMediaPanel({ notify, t }) {
+  const [photos, setPhotos] = useState(null);
+  const [style, setStyle] = useState('waterfall');
+  const [busy, setBusy] = useState(false);
+  const [progress, setProgress] = useState('');
+  const [dragging, setDragging] = useState(false);
+  const fileRef = useRef(null);
+
+  const load = async () => {
+    try {
+      const res = await fetch('/api/hall/media?scope=all', { cache: 'no-store' });
+      const data = await res.json();
+      if (data?.ok) { setPhotos(data.photos || []); setStyle(data.style || 'waterfall'); }
+      else setPhotos([]);
+    } catch { setPhotos([]); }
+  };
+  useEffect(() => { load(); }, []);
+
+  // 免费档没有服务端图片转换，压缩在浏览器完成：原图 1600px、瀑布流小图 720px。
+  const shrink = (file, maxEdge, quality) => new Promise((resolve, reject) => {
+    const url = URL.createObjectURL(file);
+    const img = new Image();
+    img.onload = () => {
+      const scale = Math.min(1, maxEdge / Math.max(img.width, img.height));
+      const w = Math.max(1, Math.round(img.width * scale));
+      const h = Math.max(1, Math.round(img.height * scale));
+      const canvas = document.createElement('canvas');
+      canvas.width = w; canvas.height = h;
+      canvas.getContext('2d').drawImage(img, 0, 0, w, h);
+      URL.revokeObjectURL(url);
+      resolve(canvas.toDataURL('image/jpeg', quality));
+    };
+    img.onerror = () => { URL.revokeObjectURL(url); reject(new Error(t('图片读取失败', 'Failed to read image'))); };
+    img.src = url;
+  });
+
+  const upload = async files => {
+    const list = [...(files || [])].filter(f => f.type.startsWith('image/'));
+    if (!list.length || busy) return;
+    setBusy(true);
+    let done = 0;
+    for (let i = 0; i < list.length; i += 1) {
+      const file = list[i];
+      setProgress(`${i + 1}/${list.length}`);
+      try {
+        const [full, thumb] = await Promise.all([shrink(file, 1600, 0.86), shrink(file, 720, 0.72)]);
+        const res = await fetch('/api/hall/media', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ action: 'upload', dataUrl: full, thumbUrl: thumb, title: file.name.replace(/\.[^.]+$/, '').slice(0, 60) }),
+        });
+        const data = await res.json().catch(() => ({}));
+        if (!res.ok || data.ok === false) throw new Error(data.error || t('上传失败', 'Upload failed'));
+        done += 1;
+      } catch (err) {
+        notify?.(`${file.name}：${err.message}`);
+      }
+    }
+    setBusy(false); setProgress('');
+    notify?.(done ? t(`已上传 ${done} 张照片`, `${done} photo(s) uploaded`) : t('没有照片被上传', 'No photo uploaded'));
+    load();
+  };
+
+  const saveStyle = async next => {
+    const prev = style;
+    setStyle(next);
+    try {
+      const res = await fetch('/api/hall/media', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ action: 'style', style: next }),
+      });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok || data.ok === false) throw new Error(data.error || 'failed');
+      notify?.(next === 'classic' ? t('登录页已切回经典版', 'Login page set to classic') : t('登录页已切到瀑布流', 'Login page set to waterfall'));
+    } catch {
+      setStyle(prev);
+      notify?.(t('样式切换失败', 'Failed to switch style'));
+    }
+  };
+
+  const toggle = async photo => {
+    const next = photo.visibility === 'public' ? 'internal' : 'public';
+    setPhotos(list => list.map(p => (p.id === photo.id ? { ...p, visibility: next } : p)));
+    try {
+      const res = await fetch('/api/hall/media', {
+        method: 'PATCH', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ id: photo.id, visibility: next }),
+      });
+      if (!res.ok) throw new Error('failed');
+      notify?.(next === 'public' ? t('已公开', 'Published') : t('已转为内部', 'Set to internal'));
+    } catch {
+      notify?.(t('更新失败', 'Update failed'));
+      load();
+    }
+  };
+
+  const removePhoto = async photo => {
+    if (!window.confirm(t('从档案库中删除这张照片？此操作不可撤销。', 'Delete this photo from the archive? This cannot be undone.'))) return;
+    setPhotos(list => list.filter(p => p.id !== photo.id));
+    try {
+      const res = await fetch(`/api/hall/media?id=${encodeURIComponent(photo.id)}`, { method: 'DELETE' });
+      if (!res.ok) throw new Error('failed');
+      notify?.(t('已删除', 'Deleted'));
+    } catch {
+      notify?.(t('删除失败', 'Delete failed'));
+      load();
+    }
+  };
+
+  return <section className="hall-panel hall-media-panel">
+    <h3><ImageIcon size={16} />{t('十周年影像档案', 'Anniversary photo archive')}</h3>
+    <div className="hall-media-bar">
+      <div className="hall-media-style">
+        <span>{t('登录页样式', 'Login page style')}</span>
+        <div className="hall-media-seg">
+          <button className={style === 'waterfall' ? 'on' : ''} onClick={() => saveStyle('waterfall')}>{t('瀑布流', 'Waterfall')}</button>
+          <button className={style === 'classic' ? 'on' : ''} onClick={() => saveStyle('classic')}>{t('经典版', 'Classic')}</button>
+        </div>
+        <a className="hall-media-preview" href="/?login=classic" target="_blank" rel="noreferrer">{t('预览经典版', 'Preview classic')}<ExternalLink size={11} /></a>
+      </div>
+      <div className="hall-media-actions">
+        <input ref={fileRef} type="file" accept="image/*" multiple hidden onChange={e => { upload(e.target.files); e.target.value = ''; }} />
+        <button className="hall-media-upload" onClick={() => fileRef.current?.click()} disabled={busy}>
+          <Upload size={14} />{busy ? `${t('上传中', 'Uploading')} ${progress}` : t('上传照片', 'Upload photos')}
+        </button>
+      </div>
+    </div>
+    <p className="hall-note">
+      <Camera size={14} />
+      {t('照片会同时出现在登录页瀑布流与「十年记忆馆 → 活动影像」。至少 3 张「公开」照片才会启用瀑布流，否则登录页保持经典版；标记为「内部」的照片只留在后台。', 'Photos appear on the login waterfall and in the public archive. At least 3 public photos enable the waterfall; otherwise the classic login stays. Internal photos remain private.')}
+    </p>
+    {photos === null ? <div className="hall-empty-block"><span className="hall-spinner" />{t('正在读取影像…', 'Loading photos…')}</div>
+      : photos.length ? <div
+        className={`hall-media-grid ${dragging ? 'drop' : ''}`}
+        onDragOver={e => { e.preventDefault(); setDragging(true); }}
+        onDragLeave={() => setDragging(false)}
+        onDrop={e => { e.preventDefault(); setDragging(false); upload(e.dataTransfer.files); }}
+      >{photos.map(photo => <figure key={photo.id}>
+        <img src={photo.thumb || photo.url} alt={photo.title || ''} loading="lazy" />
+        <figcaption>
+          <strong>{photo.title || t('未命名', 'Untitled')}</strong>
+          <small>{photo.created_at}</small>
+          <div>
+            <button className={photo.visibility === 'public' ? 'on' : ''} onClick={() => toggle(photo)}>
+              {photo.visibility === 'public' ? <Eye size={12} /> : <EyeOff size={12} />}
+              {photo.visibility === 'public' ? t('公开', 'Public') : t('内部', 'Internal')}
+            </button>
+            <button className="danger" onClick={() => removePhoto(photo)}><Trash2 size={12} />{t('删除', 'Delete')}</button>
+          </div>
+        </figcaption>
+      </figure>)}</div>
+        : <div
+          className={`hall-media-drop ${dragging ? 'drop' : ''}`}
+          onDragOver={e => { e.preventDefault(); setDragging(true); }}
+          onDragLeave={() => setDragging(false)}
+          onDrop={e => { e.preventDefault(); setDragging(false); upload(e.dataTransfer.files); }}
+          onClick={() => fileRef.current?.click()}
+        >
+          <Camera size={22} />
+          <strong>{t('把十周年的照片拖到这里', 'Drop anniversary photos here')}</strong>
+          <p>{t('支持 JPG / PNG / WebP，可一次选择多张；上传后自动出现在登录页与纪念馆。', 'JPG / PNG / WebP, multiple files supported.')}</p>
+        </div>}
+  </section>;
+}
+
 export function HallAdmin({ notify, lang = 'zh' }) {
   const t = (zh, en) => lang === 'en' ? en : zh;
   const { data, error } = useHallData();
@@ -451,6 +621,7 @@ export function HallAdmin({ notify, lang = 'zh' }) {
 
   return <div className="hall-admin">
     <div className="hall-admin-head"><h2>Hall of Honor Admin</h2><p>{t('届次资料、核验状态与公开授权管理。所有修改会记录操作时间。', 'Manage editions, verification and publication consent.')}</p></div>
+    <HallMediaPanel notify={notify} t={t} />
     <section className="hall-panel"><h3>{t('届次与主题', 'Editions & themes')}</h3>
       <div className="hall-admin-table">{data.terms.map(term => {
         const d = draft[term.id] || {};

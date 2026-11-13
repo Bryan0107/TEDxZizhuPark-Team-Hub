@@ -229,3 +229,36 @@
   .hall-admin-row{grid-template-columns:1fr}
   .hall-admin-fields{grid-template-columns:1fr}
 }
+
+/* ── 十周年影像档案（纪念馆后台） ───────────────────────────── */
+.hall-media-panel h3{display:flex;align-items:center;gap:8px}
+.hall-media-bar{display:flex;flex-wrap:wrap;align-items:center;justify-content:space-between;gap:14px;margin:4px 0 12px}
+.hall-media-style{display:flex;align-items:center;gap:10px;flex-wrap:wrap;font-size:12px;color:#6b6a64}
+.hall-media-seg{display:inline-flex;border:1px solid #e2ded4;border-radius:8px;overflow:hidden;background:#fff}
+.hall-media-seg button{border:0;background:transparent;padding:7px 14px;font-size:12px;color:#6b6a64;cursor:pointer}
+.hall-media-seg button.on{background:#e62b1e;color:#fff;font-weight:600}
+.hall-media-preview{display:inline-flex;align-items:center;gap:4px;font-size:11.5px;color:#8a8880;text-decoration:none}
+.hall-media-preview:hover{color:#e62b1e}
+.hall-media-upload{display:inline-flex;align-items:center;gap:7px;border:1px solid #e2ded4;background:#fff;color:#3a3833;border-radius:8px;padding:9px 16px;font-size:12.5px;font-weight:600;cursor:pointer}
+.hall-media-upload:hover{border-color:#e62b1e;color:#e62b1e}
+.hall-media-upload:disabled{opacity:.6;cursor:default}
+.hall-media-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(148px,1fr));gap:12px;margin-top:6px;padding:10px;border:1px dashed transparent;border-radius:12px}
+.hall-media-grid.drop{border-color:#e62b1e;background:#fff5f3}
+.hall-media-grid figure{margin:0;border:1px solid #ece7dd;border-radius:10px;overflow:hidden;background:#fff}
+.hall-media-grid img{display:block;width:100%;aspect-ratio:4/3;object-fit:cover;background:#f1ede5}
+.hall-media-grid figcaption{padding:8px 10px 10px;display:flex;flex-direction:column;gap:2px}
+.hall-media-grid strong{font-size:12px;font-weight:600;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.hall-media-grid small{font-size:10.5px;color:#9a988f}
+.hall-media-grid figcaption>div{display:flex;gap:6px;margin-top:6px}
+.hall-media-grid figcaption button{display:inline-flex;align-items:center;gap:4px;border:1px solid #e2ded4;background:#fff;border-radius:6px;padding:4px 8px;font-size:11px;color:#5f5d57;cursor:pointer}
+.hall-media-grid figcaption button.on{background:#eaf4ee;border-color:#bfdccb;color:#2f7a52}
+.hall-media-grid figcaption button.danger:hover{border-color:#e62b1e;color:#e62b1e}
+.hall-media-drop{display:flex;flex-direction:column;align-items:center;justify-content:center;gap:8px;text-align:center;padding:36px 20px;border:1.5px dashed #ddd7ca;border-radius:12px;background:#fbf9f4;cursor:pointer;color:#6b6a64}
+.hall-media-drop:hover,.hall-media-drop.drop{border-color:#e62b1e;background:#fff5f3;color:#c72318}
+.hall-media-drop strong{font-size:13.5px;color:#3a3833}
+.hall-media-drop p{font-size:12px;max-width:38em;line-height:1.7}
+@media(max-width:720px){
+  .hall-media-grid{grid-template-columns:repeat(auto-fill,minmax(132px,1fr));gap:9px;padding:0}
+  .hall-media-bar{align-items:flex-start}
+  .hall-media-upload{width:100%;justify-content:center}
+}

@@ -27,6 +27,8 @@ const ROUTES = {
   '/api/feishu/events': 'api/feishu/events.js',
   '/api/feishu/oauth/start': 'api/feishu/oauth/start.js',
   '/api/feishu/oauth/callback': 'api/feishu/oauth/callback.js',
+  '/api/hall/story': 'api/hall/story.js',
+  '/api/hall/media': 'api/hall/media.js',
   '/api/cron/feishu-sync': 'api/cron/feishu-sync.js',
 };
 

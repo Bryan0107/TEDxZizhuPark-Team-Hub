@@ -554,6 +554,7 @@ function LoginPage({ onLogin, language, setLanguage }) {
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [error, setError] = useState('');
+  const [media, setMedia] = useState(null);
   const feishuNotice = (() => {
     try {
       const params = new URLSearchParams(window.location.search);
@@ -562,6 +563,17 @@ function LoginPage({ onLogin, language, setLanguage }) {
     return '';
   })();
   const [busy, setBusy] = useState(false);
+
+  // 登录页样式与十周年影像都来自公开接口；无照片或样式为 classic 时退回经典两栏版。
+  useEffect(() => {
+    let alive = true;
+    fetch('/api/hall/media')
+      .then(res => res.json())
+      .then(data => { if (alive) setMedia(data && data.ok ? data : { style: 'classic', photos: [] }); })
+      .catch(() => { if (alive) setMedia({ style: 'classic', photos: [] }); });
+    return () => { alive = false; };
+  }, []);
+
   const submit = async event => {
     event.preventDefault();
     if (busy) return;
@@ -575,6 +587,68 @@ function LoginPage({ onLogin, language, setLanguage }) {
       setBusy(false);
     }
   };
+
+  const formBody = <>
+    <h2>{t('signInTitle')}</h2>
+    <p className="login-form-sub">{t('signInSubtitle')}</p>
+    <label className="login-field"><span>{t('signInEmail')}</span><input type="email" required autoComplete="username" placeholder="name@tedxzizhupark.com" value={email} onChange={e => setEmail(e.target.value)} /></label>
+    <label className="login-field"><span>{t('signInPassword')}</span><input type="password" required autoComplete="current-password" placeholder="••••••••" value={password} onChange={e => setPassword(e.target.value)} /></label>
+    {(error || feishuNotice) && <div className="login-error"><CircleAlert size={16} /><span>{error || feishuNotice}</span></div>}
+    <button className="login-submit" type="submit" disabled={busy}>{busy ? t('signInLoading') : t('signInSubmit')}<ArrowUpRight size={17} /></button>
+    <div className="login-divider"><span>{isEn ? 'or' : '或'}</span></div>
+    <a className="login-feishu" href="/api/feishu/oauth/start">
+      <img className="feishu-mark" src="/assets/feishu-mark.png" alt="" width="20" height="20" />
+      <span>{isEn ? 'Sign in with Feishu' : '使用飞书登录'}</span>
+      <ArrowUpRight size={15} />
+    </a>
+    <p className="login-secure"><LockKeyhole size={14} /><span>{t('signInSecure')}</span></p>
+    <p className="login-help">{t('signInHelp')}</p>
+  </>;
+
+  const storyPhotos = (media?.photos || []).slice(0, 25);
+  const forceClassic = (() => {
+    try { return new URLSearchParams(window.location.search).get('login') === 'classic'; } catch { return false; }
+  })();
+  const useWaterfall = !forceClassic && media?.style === 'waterfall' && storyPhotos.length >= 3;
+
+  if (useWaterfall) {
+    const ratios = ['4 / 5', '1 / 1', '3 / 4', '4 / 3', '5 / 4'];
+    const durations = [92, 116, 84, 104, 96, 108];
+    const columns = Array.from({ length: 6 }, (_, c) => storyPhotos.filter((_, i) => i % 6 === c))
+      .filter(col => col.length)
+      // 每列补足高度：照片少时重复排列，保证循环时不会露出背景
+      .map(col => Array.from({ length: Math.max(3, Math.ceil(10 / col.length)) }, (_, k) => col[k % col.length]));
+    return <div className="login-wf">
+      <div className="login-wf-bg" aria-hidden="true">
+        {columns.map((col, c) => <div key={c} className={`login-wf-col ${c % 2 ? 'rev' : ''}`} style={{ '--wf-dur': `${durations[c % durations.length]}s`, '--wf-delay': `-${c * 9}s` }}>
+          {[...col, ...col].map((photo, i) => <figure className="login-wf-tile" key={`${photo.id}-${i}`} style={{ aspectRatio: ratios[(c + i) % ratios.length] }}>
+            <img src={photo.thumb || photo.url} alt={photo.title || ''} loading={i < 3 ? 'eager' : 'lazy'} decoding="async" />
+          </figure>)}
+        </div>)}
+      </div>
+      <div className="login-wf-veil" aria-hidden="true" />
+      <header className="login-wf-head">
+        <img className="login-wf-logo" src="/assets/logo-white.png" alt="TEDxZizhuPark" />
+        <button className="language-button login-wf-lang" onClick={() => setLanguage(isEn ? 'zh' : 'en')}><Globe2 size={16} /><span>{isEn ? '中文' : 'English'}</span><ChevronDown size={13} /></button>
+      </header>
+      <main className="login-wf-main">
+        <div className="login-wf-copy">
+          <h1>Ideas change<br />everything<span>.</span></h1>
+          <p>{isEn ? 'Ten years of ideas, people and stages — collected in one archive.' : '十年，一群人，把想法变成现场。这些影像来自 Team Hub 的十周年档案库。'}</p>
+          <div className="login-wf-count"><strong>{storyPhotos.length}</strong><span>{isEn ? 'moments from the archive' : '张影像正在流动'}</span></div>
+        </div>
+        <div className="login-wf-card">
+          <form className="login-form" onSubmit={submit}>{formBody}</form>
+          <div className="login-panel-footer">© 2026 TEDxZizhuPark · Ideas change everything.</div>
+        </div>
+      </main>
+      <footer className="login-wf-foot">
+        <span>2026 · TEDxZizhuPark · Team Hub</span>
+        <span>Ideas worth spreading</span>
+      </footer>
+    </div>;
+  }
+
   return <div className="login-page">
     <section className="login-brand">
       <div className="login-brand-top"><img src="/assets/logo-white.png" alt="TEDxZizhuPark" /></div>
@@ -588,22 +662,7 @@ function LoginPage({ onLogin, language, setLanguage }) {
     </section>
     <section className="login-panel">
       <div className="login-panel-top"><button className="language-button" onClick={() => setLanguage(isEn ? 'zh' : 'en')}><Globe2 size={16} /><span>{isEn ? '中文' : 'English'}</span><ChevronDown size={13} /></button></div>
-      <form className="login-form" onSubmit={submit}>
-        <h2>{t('signInTitle')}</h2>
-        <p className="login-form-sub">{t('signInSubtitle')}</p>
-        <label className="login-field"><span>{t('signInEmail')}</span><input type="email" required autoComplete="username" placeholder="name@tedxzizhupark.com" value={email} onChange={e => setEmail(e.target.value)} /></label>
-        <label className="login-field"><span>{t('signInPassword')}</span><input type="password" required autoComplete="current-password" placeholder="••••••••" value={password} onChange={e => setPassword(e.target.value)} /></label>
-        {(error || feishuNotice) && <div className="login-error"><CircleAlert size={16} /><span>{error || feishuNotice}</span></div>}
-        <button className="login-submit" type="submit" disabled={busy}>{busy ? t('signInLoading') : t('signInSubmit')}<ArrowUpRight size={17} /></button>
-        <div className="login-divider"><span>{isEn ? 'or' : '或'}</span></div>
-        <a className="login-feishu" href="/api/feishu/oauth/start">
-          <img className="feishu-mark" src="/assets/feishu-mark.png" alt="" width="20" height="20" />
-          <span>{isEn ? 'Sign in with Feishu' : '使用飞书登录'}</span>
-          <ArrowUpRight size={15} />
-        </a>
-        <p className="login-secure"><LockKeyhole size={14} /><span>{t('signInSecure')}</span></p>
-        <p className="login-help">{t('signInHelp')}</p>
-      </form>
+      <form className="login-form" onSubmit={submit}>{formBody}</form>
       <div className="login-panel-footer">© 2026 TEDxZizhuPark · Ideas change everything.</div>
     </section>
   </div>;
