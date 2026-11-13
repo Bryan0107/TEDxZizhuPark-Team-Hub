@@ -156,3 +156,32 @@ APPWRITE_KEY=<your-key> node scripts/seed-hall.mjs
 - 长连接：`scripts/feishu-ws-client.mjs`（`npm run feishu:ws`），必须常驻；本机可用 `bash scripts/install-feishu-ws.sh` 装成 launchd 服务，云上可用 pm2/systemd。
 - 两者共用 `api/_lib/event-handler.js`，事件日志与幂等逻辑一致；设置页会显示长连接在线状态（依据 `ws.heartbeat`，5 分钟一次）。
 - 长连接不排队：进程停止期间的事件不会补推，靠每日全量同步兜底。
+
+## 12. 登录页与十周年影像档案库（2026-11-13）
+
+### 12.1 一处上传，两处生效
+
+`纪念馆管理 → 十周年影像档案`（`/hall-admin` 顶部面板）上传照片后：
+
+| 去处 | 条件 | 读取方式 |
+|---|---|---|
+| 登录页瀑布流 | `visibility = public` 且公开照片 ≥ 3 张 | `GET /api/hall/media`（公开） |
+| 纪念馆「十年记忆馆 → 活动影像」 | `visibility = public` | `legacy_assets` 直读（已有逻辑） |
+| 后台影像列表 | 全部 | `GET /api/hall/media?scope=all`（需管理员会话，`no-store`） |
+
+- 存储：Appwrite Storage 桶 **`hall_media`**（`read("any")`，写 `users`，单文件上限 12MB，白名单 jpg/png/webp/avif）。
+- 每张照片两个文件：`photo_xxx`（原图 1600px）与 `photo_xxx_s`（720px 小图，供瀑布流）。
+  免费档不支持服务端图片转换，压缩在浏览器完成（canvas）。
+- 元数据写在 `legacy_assets`：`asset_type=photo`、`file_url`、`visibility`、`created_at`，行 ID 与文件名一致，删除时一并清理。
+
+### 12.2 登录页样式切换（可回退）
+
+- `app_settings` 表 `login_style` 行：`waterfall`（默认）/ `classic`。
+- 后台面板顶部「登录页样式」直接切换；也可用 URL 临时预览：`/?login=classic`。
+- **自动兜底**：公开照片不足 3 张、接口不可用、或 `prefers-reduced-motion` 之外的其他异常，均回落到经典两栏版，不会白屏。
+- 经典版代码保留在 `LoginPage` 的 return 分支，样式在 `styles.css`，未删除。
+
+### 12.3 品牌图标
+
+`index.html` 声明 `/favicon.svg`（红底白 x）、`/assets/icons/favicon-32.png`、`/assets/icons/apple-touch-icon.png`、`/manifest.webmanifest`。
+换标只需替换 `public/assets/icons/` 下同名文件与 `public/favicon.svg`。
