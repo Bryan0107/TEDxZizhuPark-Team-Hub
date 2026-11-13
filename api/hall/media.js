@@ -87,17 +87,16 @@ export default async function handler(req, res) {
 
   try {
     if (method === 'GET') {
-      const [style, photos] = await Promise.all([readStyle(), readPhotos()]);
-      let list = photos;
+      const [style, allPhotos] = await Promise.all([readStyle(), readPhotos()]);
       if (req.query?.scope === 'all') {
+        // 后台视图包含「内部」照片，绝不能进 CDN 缓存。
         const session = await requireAdminOrAppwrite(req, res);
         if (!session) return undefined;
-        list = photos;
-      } else {
-        list = photos.filter(p => p.visibility === 'public');
+        res.setHeader('Cache-Control', 'no-store, private');
+        return res.status(200).json({ ok: true, style, photos: allPhotos });
       }
-      res.setHeader('Cache-Control', 'public, max-age=20, s-maxage=40, stale-while-revalidate=120');
-      return res.status(200).json({ ok: true, style, photos: list });
+      res.setHeader('Cache-Control', 'public, max-age=15, s-maxage=30, stale-while-revalidate=60');
+      return res.status(200).json({ ok: true, style, photos: allPhotos.filter(p => p.visibility === 'public') });
     }
 
     const session = await requireAdminOrAppwrite(req, res);
