@@ -829,11 +829,19 @@ function MainApp({ session, onLogout, onSessionUpdate, language, setLanguage }) 
     const onPop = () => {
       const page = pageFromPath(window.location.pathname) || 'dashboard';
       setActivePage(page);
+      setSidebarOpen(false);
       window.scrollTo(0, 0);
     };
     window.addEventListener('popstate', onPop);
     return () => window.removeEventListener('popstate', onPop);
   }, []);
+
+  // 移动端：抽屉或全屏弹窗打开时锁住页面滚动，避免背景跟着滑动（iOS 尤其明显）。
+  useEffect(() => {
+    const locked = sidebarOpen || Boolean(modal);
+    document.body.classList.toggle('scroll-locked', locked);
+    return () => document.body.classList.remove('scroll-locked');
+  }, [sidebarOpen, modal]);
 
   const navigate = page => {
     const path = PAGE_PATHS[page] || '/';

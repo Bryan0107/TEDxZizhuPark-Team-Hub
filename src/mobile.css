@@ -1,0 +1,293 @@
+/* ============================================================================
+   移动端适配层（iOS Safari / Android Chrome）
+   加载顺序在 styles.css 之后，因此可以覆盖桌面版规则。
+   断点：≤1020（侧栏抽屉）· ≤720（手机竖屏）· ≤420（窄屏 iPhone / 小屏安卓）
+   原则：
+   1. 任何页面都不允许横向溢出；宽表格自身滚动，不带动整页。
+   2. 可点元素不小于 40×40（iOS HIG 44 上取整到 40 以兼顾密度）。
+   3. 输入框一律 16px，避免 iOS 聚焦时自动放大整页。
+   4. 顶部刘海 / 底部小白条用 env(safe-area-inset-*) 留白。
+   ========================================================================== */
+
+:root {
+  --safe-top: env(safe-area-inset-top, 0px);
+  --safe-bottom: env(safe-area-inset-bottom, 0px);
+  --safe-left: env(safe-area-inset-left, 0px);
+  --safe-right: env(safe-area-inset-right, 0px);
+  --tap: 40px;
+}
+
+/* ── 0. 基础：禁止 iOS 字号放大 / 双击缩放延迟 ─────────────────────────── */
+html { -webkit-text-size-adjust: 100%; text-size-adjust: 100%; }
+body { overscroll-behavior-x: none; }
+button, a, [role="button"], select, label { touch-action: manipulation; }
+body.scroll-locked { overflow: hidden; }
+
+/* ── 1. ≤1020：抽屉式侧栏 + 安全区 ─────────────────────────────────────── */
+@media (max-width: 1020px) {
+  .app-shell { min-height: 100vh; min-height: 100dvh; }
+  .main-shell { margin-left: 0; }
+
+  .sidebar {
+    width: min(85vw, 302px);
+    height: 100vh;
+    height: 100dvh;
+    padding: 0 12px calc(10px + var(--safe-bottom)) calc(12px + var(--safe-left));
+    overflow-y: auto;
+    overscroll-behavior: contain;
+    -webkit-overflow-scrolling: touch;
+  }
+  /* 侧栏内容高于屏幕时整栏滚动；标题区与导航不许被 flex 压缩 */
+  .side-nav { flex: 0 0 auto; overflow: visible; }
+  .sidebar .brand { flex: 0 0 auto; min-height: 56px; }
+  .sidebar .year-switch,
+  .sidebar .sidebar-bottom { flex: none; }
+  .sidebar.open { box-shadow: 24px 0 64px rgba(30, 26, 21, .22); }
+  .sidebar-scrim { background: rgba(30, 26, 21, .42); backdrop-filter: blur(2px); }
+
+  /* 顶栏跟随滚动吸顶，并让出刘海高度 */
+  .topbar {
+    position: sticky;
+    top: 0;
+    z-index: 30;
+    height: calc(54px + var(--safe-top));
+    padding-top: var(--safe-top);
+    padding-left: calc(12px + var(--safe-left));
+    padding-right: calc(12px + var(--safe-right));
+  }
+  .main-content {
+    padding: 18px calc(14px + var(--safe-right)) 26px calc(14px + var(--safe-left));
+  }
+  .app-footer {
+    padding: 14px calc(14px + var(--safe-right)) calc(18px + var(--safe-bottom)) calc(14px + var(--safe-left));
+  }
+  .notifications-panel { top: calc(54px + var(--safe-top)) !important; }
+}
+
+/* ── 2. ≤720：手机竖屏 ──────────────────────────────────────────────────── */
+@media (max-width: 720px) {
+  /* 触控尺寸 */
+  .icon-button,
+  .mobile-menu { width: var(--tap); height: var(--tap); }
+  .topbar-right { gap: 2px; flex: none; }
+  .topbar-left { min-width: 0; overflow: hidden; white-space: nowrap; }
+  .topbar-left strong { overflow: hidden; text-overflow: ellipsis; }
+  .topbar-right > .button { width: var(--tap); min-width: var(--tap); padding: 0; font-size: 0; gap: 0; }
+  .topbar-right > .button svg { width: 18px; height: 18px; }
+  .global-search { width: var(--tap); flex: none; }
+  .language-button { width: var(--tap); justify-content: center; padding: 0; gap: 0; }
+  .language-button span,
+  .language-button > svg:last-child { display: none; }
+  .button { min-height: var(--tap); }
+  .nav-item { height: 44px; font-size: 14px; gap: 11px; }
+  .nav-item svg { width: 18px; height: 18px; }
+  .nav-label { font-size: 11.5px; }
+  .filter-tabs button,
+  .card-tabs button,
+  .review-tabs button,
+  .member-section-tabs button { min-height: 36px; }
+  .profile { padding: 8px 6px; }
+  .profile strong { font-size: 13.5px; }
+  .profile span { font-size: 12px; }
+  .year-switch { height: 38px; font-size: 12.5px; }
+
+  /* 输入：16px 是 iOS 不自动放大页面的临界值 */
+  input, select, textarea { font-size: 16px; }
+  .main-content input, .main-content select, .main-content textarea,
+  .modal input, .modal select, .modal textarea,
+  .login-form input { font-size: 16px; line-height: 1.4; }
+  .select-field, .toolbar-right .select-field, .local-search { height: var(--tap); }
+  .local-search { min-width: 0; flex: 1 1 100%; }
+
+  /* 排版收敛 */
+  .page-title-row h1 { font-size: 22px; }
+  .page-title-row p { font-size: 12.5px; }
+  .main-content { padding-top: 16px; }
+  .page-actions .button { min-height: var(--tap); }
+  .language-button { height: var(--tap); }
+  .text-button, .link-button, .bare-button { min-height: 32px; padding-top: 6px; padding-bottom: 6px; }
+  .full-secondary-button, .select-button, .ghost-button { min-height: var(--tap); }
+
+  /* 月报编辑器：步骤条保留文字标题，图标在上、标题在下 */
+  .editor-steps { grid-template-columns: repeat(4, 1fr); gap: 3px; padding: 8px 6px; }
+  .editor-steps > button {
+    flex-direction: column;
+    justify-content: center;
+    gap: 4px;
+    padding: 6px 2px;
+    height: auto;
+    margin: 0;
+  }
+  .editor-steps > button > span { width: 26px; height: 26px; flex: none; }
+  .editor-steps > button > div { display: block; text-align: center; min-width: 0; width: 100%; }
+  .editor-steps > button > div small { display: none; }
+  .editor-steps > button > div strong {
+    display: block;
+    font-size: 10.5px;
+    line-height: 1.3;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+
+  /* 统计卡：手机上一律两列，避免四个整宽卡片连成一条长带 */
+  .metrics-grid { grid-template-columns: 1fr 1fr; gap: 8px; }
+  .metric-card { padding: 13px 12px 12px; }
+  .metric-value { font-size: 22px; }
+  .metric-note { font-size: 11px; line-height: 1.45; }
+
+  /* 成员概览：数字在左、说明在右的三条紧凑行 */
+  .member-insights { grid-template-columns: 1fr; gap: 7px; }
+  .member-insights > div {
+    display: grid;
+    grid-template-columns: 62px 1fr;
+    align-items: center;
+    gap: 1px 12px;
+    padding: 11px 14px;
+  }
+  .member-insights strong { font-size: 23px; line-height: 1.1; }
+  .member-insights p { margin: 0; font-size: 12px; }
+  .member-insights small { grid-column: 2; margin: 1px 0 0; font-size: 11px; }
+
+  /* 筛选条 / 标签条：直接换行，不要出现被切掉一半的按钮 */
+  .toolbar-right { flex-wrap: wrap; overflow: visible; gap: 8px; width: 100%; }
+  .toolbar-right > * { flex: 1 1 132px; min-width: 0; }
+  .toolbar-right > .icon-button { flex: 0 0 var(--tap); width: var(--tap); }
+  .member-section-tabs,
+  .settings-nav,
+  .hall-nav,
+  .card-tabs,
+  .filter-tabs,
+  .review-tabs { flex-wrap: wrap; overflow: visible; row-gap: 2px; }
+
+  /* 宽表格：自身横向滚动，不带动整页 */
+  .table-wrap,
+  .table-card,
+  .rules-table,
+  .matrix-table,
+  .reserve-table,
+  .editor-member-table {
+    -webkit-overflow-scrolling: touch;
+    overscroll-behavior-x: contain;
+  }
+  .table-card { overflow-x: auto; }
+
+  /* 弹窗：整屏 + 头尾吸顶 + 底部安全区 */
+  .modal-backdrop { padding: 0; align-items: stretch; }
+  .modal,
+  .modal-md, .modal-lg, .modal-xl, .modal-full {
+    max-width: none;
+    width: 100%;
+    height: 100vh;
+    height: 100dvh;
+    max-height: 100vh;
+    max-height: 100dvh;
+    border-radius: 0;
+  }
+  .modal-header {
+    position: sticky;
+    top: 0;
+    z-index: 3;
+    background: var(--paper, #fffdf8);
+    padding-top: calc(14px + var(--safe-top));
+  }
+  .modal-footer {
+    position: sticky;
+    bottom: 0;
+    z-index: 3;
+    background: var(--paper, #fffdf8);
+    padding-bottom: calc(12px + var(--safe-bottom));
+  }
+  .modal-body { overscroll-behavior: contain; -webkit-overflow-scrolling: touch; }
+
+  /* 浮层与提示 */
+  .toast { bottom: calc(16px + var(--safe-bottom)); }
+  .notifications-panel {
+    top: calc(54px + var(--safe-top));
+    left: calc(8px + var(--safe-left));
+    right: calc(8px + var(--safe-right));
+  }
+  .search-results { position: fixed; left: 12px; right: 12px; top: calc(54px + var(--safe-top)); width: auto; }
+
+  /* 图表随容器收缩 */
+  .recharts-wrapper, .recharts-responsive-container { max-width: 100% !important; }
+  .recharts-cartesian-axis-tick-value { font-size: 10px; }
+  .recharts-legend-item-text { font-size: 11px !important; }
+
+  /* 登录页：压缩品牌区，保证邮箱/密码/登录按钮首屏可见 */
+  .login-page { min-height: 100vh; min-height: 100dvh; }
+  .login-brand { padding: 22px 20px 24px; gap: 16px; }
+  .login-brand-top img { width: 148px; }
+  .login-brand-copy h1 { font-size: 28px; line-height: 1.12; margin-bottom: 9px; }
+  .login-brand-copy p { font-size: 13.5px; line-height: 1.6; }
+  .login-brand-copy small,
+  .login-brand-footer { display: none; }
+  .login-brand-x { font-size: 210px; right: -50px; bottom: -80px; opacity: .55; }
+  .login-panel { padding: 16px 20px calc(22px + var(--safe-bottom)); }
+  .login-form { margin: 20px auto 24px; }
+  .login-form h2 { font-size: 23px; }
+}
+
+/* ── 3. ≤420：窄屏（iPhone 12 mini / 小屏安卓 / 折叠屏外屏） ───────────── */
+@media (max-width: 420px) {
+  body { min-width: 0; }
+  .main-content { padding-left: calc(12px + var(--safe-left)); padding-right: calc(12px + var(--safe-right)); }
+  .page-title-row h1 { font-size: 21px; }
+  .metrics-grid { grid-template-columns: 1fr 1fr; gap: 7px; }
+  .metric-card { padding: 12px 10px; }
+  .metric-value { font-size: 21px; }
+  .points-hero { padding: 20px 16px; }
+  .card { padding: 14px; }
+  .table-toolbar { gap: 10px; }
+  .timeline-item, .activity-item { gap: 10px; }
+  .editor-steps > button { padding: 8px 2px; }
+  .toast { font-size: 12.5px; line-height: 1.5; }
+  .member-section-tabs button { padding: 9px 6px; font-size: 11.5px; gap: 4px; }
+
+  /* 倒计时文案避免把「年度大会」拆成两行 */
+  .event-countdown { gap: 8px; }
+  .event-countdown-kicker { word-break: keep-all; font-size: 11.5px; line-height: 1.35; }
+  .event-countdown-copy { align-items: flex-end; }
+
+  /* 截止提醒：窄屏排成「说明 / 进度 + 操作」两行，进度条不再被挤成竖排文字 */
+  .deadline-banner {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) auto;
+    align-items: center;
+    gap: 10px 12px;
+    padding: 14px 15px;
+  }
+  .deadline-copy { grid-column: 1 / -1; min-width: 0; }
+  .deadline-progress { grid-column: 1; width: 100%; margin: 0; }
+  .deadline-banner > .button { grid-column: 2; width: auto; justify-self: end; }
+
+  /* 月报横幅：窄屏改两列网格，避免「提交进度」被拆成两行 */
+  .report-month-banner {
+    display: grid;
+    grid-template-columns: 52px minmax(0, 1fr) minmax(0, 1fr);
+    align-items: center;
+    gap: 10px 12px;
+    padding: 15px 14px;
+  }
+  .report-month-banner > .month-calendar { grid-row: 1 / span 2; height: 52px; }
+  .report-month-banner > div:nth-child(2) { grid-column: 2 / -1; min-width: 0; }
+  .report-month-banner > div:nth-child(2) h3 { font-size: 15px; line-height: 1.35; }
+  .report-month-banner > div:nth-child(2) p { font-size: 11.5px; }
+  .report-month-banner .month-banner-stat { border: 0; padding: 0 !important; display: block; }
+  .report-month-banner .month-banner-stat span { font-size: 11px; white-space: nowrap; }
+  .report-month-banner .month-banner-stat strong { font-size: 17px; }
+  .report-month-banner > .button { grid-column: 1 / -1; width: 100%; }
+}
+
+/* ── 4. 横屏手机（高度很矮时压缩纵向留白） ─────────────────────────────── */
+@media (max-width: 900px) and (max-height: 480px) {
+  .topbar { height: calc(48px + var(--safe-top)); }
+  .main-content { padding-top: 10px; }
+  .page-title-row { margin-bottom: 12px; }
+  .modal-header { padding-top: calc(8px + var(--safe-top)); }
+}
+
+/* ── 5. 支持动态视口的浏览器（Safari 15+ / Chrome 108+） ────────────────── */
+@supports (height: 100dvh) {
+  .modal, .modal-md, .modal-lg, .modal-xl, .modal-full { height: 100dvh; max-height: 100dvh; }
+}

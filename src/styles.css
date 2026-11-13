@@ -606,7 +606,7 @@ button:focus-visible,input:focus-visible,select:focus-visible,textarea:focus-vis
 
 /* ---- 2. 侧栏：密排、单列、当前项是面阶差而不是高亮胶囊 ---- */
 .sidebar{width:252px;background:#faf5ec;border-right:1px solid var(--line);padding:0 12px}
-.main-shell{margin-left:252px}
+@media(min-width:1021px){.main-shell{margin-left:252px}}
 .brand{min-height:64px;padding:14px 4px 8px}
 .brand-lockup{max-width:152px}
 .year-switch{margin:0 0 14px;padding:6px 10px;border-radius:var(--r-ctrl);border:1px solid var(--line);background:transparent;font-size:11.5px;font-weight:400;color:var(--muted);letter-spacing:.02em}
