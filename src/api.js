@@ -8,6 +8,17 @@ export const DB = 'tedx_team_hub';
 const client = new Client().setEndpoint(APPWRITE_ENDPOINT).setProject(APPWRITE_PROJECT);
 export const tables = new TablesDB(client);
 
+/**
+ * 表权限收紧到 users 之后，飞书登录的用户在 Appwrite 侧仍是匿名身份。
+ * 服务端会随 /api/session 下发一个 Appwrite 会话密钥，这里挂到 SDK 上，
+ * 浏览器侧的读写才具备 users 角色（详见 api/_lib/appwrite-identity.js）。
+ */
+export function setAppwriteSession(secret) {
+  if (secret) {
+    try { client.setSession(secret); } catch { /* 旧版本 SDK 不支持时保持匿名 */ }
+  }
+}
+
 // 每张表允许写入的列（Appwrite TablesDB 为严格结构，传入未定义字段会报错）。
 const TABLE_COLUMNS = {
   teams: ['name', 'short', 'color', 'leader', 'description', 'avatars', 'status', 'members', 'tasks', 'done', 'active', 'points', 'workload', 'feishu_open_department_id', 'feishu_department_name'],

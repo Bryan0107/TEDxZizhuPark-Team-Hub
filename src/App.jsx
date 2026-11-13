@@ -15,7 +15,7 @@ import {
   BarChart, Bar, Cell, PieChart, Pie, LineChart, Line, Legend
 } from 'recharts';
 import { teams as initialTeams, members as initialMembers, initialTasks, initialReports, pointTransactions, reserveVolunteers } from './data';
-import { fetchTable, syncTable, fetchSettings, saveSettings, fetchAppSetting, saveAppSetting, removeRow, pingCloud, APPWRITE_ENDPOINT, APPWRITE_PROJECT, DB } from './api';
+import { fetchTable, syncTable, fetchSettings, saveSettings, fetchAppSetting, saveAppSetting, removeRow, pingCloud, setAppwriteSession, APPWRITE_ENDPOINT, APPWRITE_PROJECT, DB } from './api';
 import HallOfHonor, { HallAdmin } from './hall';
 import './hall.css';
 import { getCurrentUser, signIn, signOut, updateMyPrefs, roleLabel } from './auth';
@@ -621,6 +621,9 @@ export default function App() {
         if (!alive) return;
         if (res && res.session) {
           const s = res.session;
+          // 数据读写直连 Appwrite，必须先把服务端下发的会话密钥挂到 SDK 上，
+          // 否则表权限收紧后会以匿名身份请求而被拒绝。
+          setAppwriteSession(s.appwriteSession);
           setSession({
             id: s.id,
             name: s.name,

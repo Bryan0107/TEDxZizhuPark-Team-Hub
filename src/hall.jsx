@@ -281,7 +281,14 @@ function HallMemberJourney({ data, memberId, go, lang, notify }) {
     setSaving(true);
     const content = [['最难忘的一次经历', form.memory], ['最想感谢的伙伴', form.partner], ['最大的收获', form.gain], ['对刚加入时的自己说', form.past], ['给下一届伙伴', form.next]].filter(([, v]) => v).map(([k, v]) => `${k}：${v}`).join('\n');
     try {
-      await saveRow('member_stories', { id: `story_${Date.now()}`, member_id: memberId, term_id: records[records.length - 1]?.term_id || '', title: `${member.name} 的十周年寄语`, content, submission_status: 'submitted', visibility: 'private', authorization_status: 'pending', created_at: new Date().toLocaleDateString('zh-CN') });
+      // 公开页没有账号，投稿走服务端接口代写（表权限已收紧到登录用户）。
+      const resp = await fetch('/api/hall/story', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ member_id: memberId, content }),
+      });
+      const payload = await resp.json().catch(() => ({}));
+      if (!resp.ok || payload.ok === false) throw new Error(payload.error || 'failed');
       setSent(true);
       notify?.(t('寄语已提交，审核通过后会展示在纪念馆', 'Message submitted. It will appear after review.'));
     } catch {

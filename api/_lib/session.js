@@ -9,7 +9,11 @@
 import crypto from 'node:crypto';
 
 export const COOKIE_NAME = 'th_session';
+// 浏览器直连 Appwrite 时使用的会话密钥（见 _lib/appwrite-identity.js）。
+export const APPWRITE_COOKIE = 'th_aws';
 const DEFAULT_TTL = 60 * 60 * 12; // 12 小时
+// Appwrite 会话密钥不需要跟 JWT 同步过期：JWT 过期后没有 th_session 就取不到它。
+const APPWRITE_TTL = 60 * 60 * 24 * 30; // 30 天
 
 const secret = () => process.env.TEAM_HUB_SESSION_SECRET || '';
 
@@ -58,6 +62,13 @@ export function readSession(req) {
   return verifyToken(token);
 }
 
+// 一个响应可能需要同时下发多个 Cookie，这里统一追加而不是覆盖。
+const appendCookie = (res, cookie) => {
+  const prev = res.getHeader('Set-Cookie');
+  const list = Array.isArray(prev) ? prev : prev ? [prev] : [];
+  res.setHeader('Set-Cookie', [...list, cookie]);
+};
+
 export function setSessionCookie(res, token, ttl = DEFAULT_TTL) {
   const parts = [
     `${COOKIE_NAME}=${encodeURIComponent(token)}`,
@@ -67,11 +78,32 @@ export function setSessionCookie(res, token, ttl = DEFAULT_TTL) {
     `Max-Age=${ttl}`,
   ];
   if (process.env.VERCEL_ENV === 'production') parts.push('Secure');
-  res.setHeader('Set-Cookie', parts.join('; '));
+  appendCookie(res, parts.join('; '));
 }
 
 export function clearSessionCookie(res) {
-  res.setHeader('Set-Cookie', `${COOKIE_NAME}=; Path=/; HttpOnly; SameSite=Lax; Max-Age=0`);
+  appendCookie(res, `${COOKIE_NAME}=; Path=/; HttpOnly; SameSite=Lax; Max-Age=0`);
+}
+
+export function readAppwriteSessionSecret(req) {
+  return parseCookies(req)[APPWRITE_COOKIE] || '';
+}
+
+export function setAppwriteSessionCookie(res, secret, ttl = APPWRITE_TTL) {
+  if (!secret) return;
+  const parts = [
+    `${APPWRITE_COOKIE}=${encodeURIComponent(secret)}`,
+    'Path=/',
+    'HttpOnly',
+    'SameSite=Lax',
+    `Max-Age=${ttl}`,
+  ];
+  if (process.env.VERCEL_ENV === 'production') parts.push('Secure');
+  appendCookie(res, parts.join('; '));
+}
+
+export function clearAppwriteSessionCookie(res) {
+  appendCookie(res, `${APPWRITE_COOKIE}=; Path=/; HttpOnly; SameSite=Lax; Max-Age=0`);
 }
 
 /** 需要登录的接口统一守卫。 */
