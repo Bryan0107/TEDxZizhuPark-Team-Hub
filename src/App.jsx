@@ -43,7 +43,7 @@ const displayValue = (value, language) => language === 'en' ? (valueTranslations
 
 const dictionaries = {
   zh: {
-    workspace: '工作台', operations: '团队运营', management: '组织管理',
+    workspace: '工作台', operations: '团队运营', management: '组织管理', dataPoints: '数据与积分',
     dashboard: '首页', myPoints: '我的积分', reports: '月度报告', tasks: '任务管理', teams: '团队管理', members: '成员管理',
     pointsManagement: '积分管理', analytics: '数据分析', settings: '系统设置',
     dashboardTitle: '年度驾驶舱', dashboardSubtitle: '总览组织运行状态与团队贡献',
@@ -108,7 +108,7 @@ const dictionaries = {
     greetingDynamicSub: '每一次参与，都值得被记录。'
   },
   en: {
-    workspace: 'Workspace', operations: 'Team Operations', management: 'Organization',
+    workspace: 'Workspace', operations: 'Team Operations', management: 'Organization', dataPoints: 'Data & points',
     dashboard: 'Dashboard', myPoints: 'My Points', reports: 'Monthly Reports', tasks: 'Tasks', teams: 'Teams', members: 'Members',
     pointsManagement: 'Points', analytics: 'Analytics', settings: 'Settings',
     dashboardTitle: 'Annual Dashboard', dashboardSubtitle: 'A clear view of organizational health and team contributions',
@@ -195,6 +195,28 @@ const ANNUAL_EVENT = { date: '2027-04-25', month: 4, day: 25, year: 2027 };
 /** 年度切换的可选项：当前只有 2026；新增赛季时在此追加。 */
 const YEAR_OPTIONS = [2026];
 
+/** 页面 ↔ 路径：每个界面都有独立 URL，可直接分享、刷新、前进后退。 */
+const PAGE_PATHS = {
+  dashboard: '/',
+  myPoints: '/my-points',
+  reports: '/reports',
+  tasks: '/tasks',
+  teams: '/teams',
+  members: '/members',
+  pointsManagement: '/points',
+  analytics: '/analytics',
+  settings: '/settings',
+  hallAdmin: '/hall-admin',
+};
+
+const PATH_TO_PAGE = Object.fromEntries(Object.entries(PAGE_PATHS).map(([page, path]) => [path, page]));
+
+/** 从当前地址解析页面，未知路径返回 null（调用方会回落到首页并纠正 URL）。 */
+function pageFromPath(pathname = window.location.pathname) {
+  const clean = String(pathname || '/').replace(/\/+$/, '') || '/';
+  return PATH_TO_PAGE[clean] || null;
+}
+
 const ROLE_PAGES = {
   admin: ['dashboard', 'myPoints', 'reports', 'tasks', 'teams', 'members', 'pointsManagement', 'analytics', 'settings', 'hallAdmin'],
   leader: ['dashboard', 'myPoints', 'reports', 'tasks', 'teams', 'members', 'analytics', 'settings'],
@@ -222,10 +244,12 @@ const getNavGroups = t => [
   { label: t('operations'), items: [
     { id: 'reports', label: t('reports'), icon: FileText, badge: 3 },
     { id: 'tasks', label: t('tasks'), icon: CheckSquare },
+  ]},
+  { label: t('management'), items: [
     { id: 'teams', label: t('teams'), icon: UsersRound },
     { id: 'members', label: t('members'), icon: UserRound },
   ]},
-  { label: t('management'), items: [
+  { label: t('dataPoints'), items: [
     { id: 'pointsManagement', label: t('pointsManagement'), icon: Award },
     { id: 'analytics', label: t('analytics'), icon: BarChart3 },
   ]},
@@ -629,7 +653,7 @@ export default function App() {
 }
 
 function MainApp({ session, onLogout, onSessionUpdate, language, setLanguage }) {
-  const [activePage, setActivePage] = useState('dashboard');
+  const [activePage, setActivePage] = useState(() => pageFromPath(window.location.pathname) || 'dashboard');
   const [activeYear, setActiveYear] = usePersistentState('tedx-hub-v2-year', 2026);
   const [sidebarOpen, setSidebarOpen] = useState(false);
   const [tasks, setTasks] = useCloudState('tedx-hub-v2-tasks', 'tasks', initialTasks);
@@ -665,6 +689,25 @@ function MainApp({ session, onLogout, onSessionUpdate, language, setLanguage }) 
   const pageMeta = getPageMeta(t);
   // 普通成员/组长看到的是个人工作台，不展示「年度驾驶舱」这个名字。
   const pageMetaForRole = role === 'admin' ? pageMeta : { ...pageMeta, dashboard: [isEn ? 'My desk' : '我的工作台', ''] };
+
+  // 未知路径回落首页；标签页标题跟随页面
+  useEffect(() => {
+    if (pageFromPath(window.location.pathname) === null && window.location.pathname !== '/') {
+      window.history.replaceState({}, '', '/');
+    }
+  }, []);
+  useEffect(() => {
+    const label = (pageMetaForRole[activePage] || [])[0];
+    document.title = label ? `${label} · TEDxZizhuPark Team Hub` : 'TEDxZizhuPark Team Hub';
+  }, [activePage, language]);
+
+  // 登录成功后清掉 ?feishu=ok 之类的回调参数，地址栏保持干净
+  useEffect(() => {
+    const url = new URL(window.location.href);
+    if (!url.search) return;
+    url.search = '';
+    window.history.replaceState({}, '', `${url.pathname}${url.hash}`);
+  }, []);
   // 全部展示用数据都由数据库真实记录推导，避免出现写死的示意数字。
   const activeMembers = useMemo(() => members.filter(m => m.member_status === 'active'), [members]);
   // 当前登录者对应的成员档案：左下角个人卡片要显示飞书头像，而不是字母占位。
@@ -758,9 +801,31 @@ function MainApp({ session, onLogout, onSessionUpdate, language, setLanguage }) 
       ...(role === 'admin' ? [{ id: 'hallAdmin', label: t('hallAdminNav'), icon: ShieldCheck }] : []),
     ] });
   }
-  useEffect(() => { if (!allowedPages.includes(activePage)) setActivePage('dashboard'); }, [role]);
+  useEffect(() => {
+    if (allowedPages.includes(activePage)) return;
+    window.history.replaceState({}, '', '/');
+    setActivePage('dashboard');
+  }, [role, activePage]);
 
-  const navigate = page => { setActivePage(page); setSidebarOpen(false); setSearch(''); setSearchFocus(false); setLanguageOpen(false); setNotificationsOpen(false); setProfileOpen(false); window.scrollTo(0, 0); };
+  // 浏览器前进 / 后退
+  useEffect(() => {
+    const onPop = () => {
+      const page = pageFromPath(window.location.pathname) || 'dashboard';
+      setActivePage(page);
+      window.scrollTo(0, 0);
+    };
+    window.addEventListener('popstate', onPop);
+    return () => window.removeEventListener('popstate', onPop);
+  }, []);
+
+  const navigate = page => {
+    const path = PAGE_PATHS[page] || '/';
+    if (window.location.pathname !== path) window.history.pushState({ page }, '', path);
+    setActivePage(page);
+    setSidebarOpen(false); setSearch(''); setSearchFocus(false);
+    setLanguageOpen(false); setNotificationsOpen(false); setProfileOpen(false);
+    window.scrollTo(0, 0);
+  };
   const notify = message => setToast(message);
   const closeModal = () => setModal(null);
 
