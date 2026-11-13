@@ -1,4 +1,4 @@
-import React, { useContext, useEffect, useMemo, useRef, useState } from 'react';
+import React, { useContext, useEffect, useMemo, useRef, useState, lazy, Suspense } from 'react';
 import {
   LayoutDashboard, Coins, FileText, CheckSquare, UsersRound, UserRound,
   BarChart3, Settings, Search, Bell, ChevronDown, ChevronRight, Plus,
@@ -10,10 +10,14 @@ import {
   ChevronLeft, Eye, Pencil, RotateCcw, Info, ExternalLink, Copy, CheckCircle2,
   FileSpreadsheet, Upload, Trash2, LockKeyhole, Database, Palette, Globe2, RefreshCw
 } from 'lucide-react';
-import {
-  AreaChart, Area, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer,
-  BarChart, Bar, Cell, PieChart, Pie, LineChart, Line, Legend
-} from 'recharts';
+// recharts 体积大（400KB+），按需懒加载，主包不再包含，首屏更快。
+// 每个图表组件单独 lazy，用到哪个才加载哪个（共用一个 charts chunk）。
+const Charts = {
+  TrendChart: lazy(() => import('./charts').then(m => ({ default: m.TrendChart }))),
+  TeamBarChart: lazy(() => import('./charts').then(m => ({ default: m.TeamBarChart }))),
+  PointsPieChart: lazy(() => import('./charts').then(m => ({ default: m.PointsPieChart }))),
+  TeamWorkloadChart: lazy(() => import('./charts').then(m => ({ default: m.TeamWorkloadChart }))),
+};
 import { teams as initialTeams, members as initialMembers, initialTasks, initialReports, pointTransactions, reserveVolunteers } from './data';
 import { fetchTable, syncTable, fetchSettings, saveSettings, fetchAppSetting, saveAppSetting, removeRow, pingCloud, setAppwriteSession, APPWRITE_ENDPOINT, APPWRITE_PROJECT, DB } from './api';
 import HallOfHonor, { HallAdmin } from './hall';
@@ -343,9 +347,8 @@ function Toast({ message, onClose }) {
   return <div className="toast"><span><Check size={16} /></span>{message}<button onClick={onClose}><X size={15} /></button></div>;
 }
 
-function CustomTooltip({ active, payload, label, unit = '' }) {
-  if (!active || !payload?.length) return null;
-  return <div className="chart-tooltip"><strong>{label}</strong>{payload.map((p, i) => <div key={i}><i style={{ background: p.color }} />{p.name}<b>{p.value}{unit}</b></div>)}</div>;
+function ChartFallback() {
+  return <div className="chart-loading" style={{ height: '100%', display: 'grid', placeItems: 'center' }}><span className="muted" style={{ fontSize: 12 }}>图表加载中…</span></div>;
 }
 
 function usePersistentState(key, initialValue) {
@@ -1318,7 +1321,7 @@ function Dashboard({ teams, reports, tasks, members, transactions, monthlyTrend 
       <div className="card trend-card">
         <div className="card-header"><div><h2>{t('orgTrend')}</h2><p>{t('orgTrendSub')}</p></div><div className="segmented small"><button className={chartMetric === 'workload' ? 'active' : ''} onClick={() => setChartMetric('workload')}>{t('workload')}</button><button className={chartMetric === 'active' ? 'active' : ''} onClick={() => setChartMetric('active')}>{t('activePeople')}</button></div></div>
         <div className="chart-summary"><strong>{metricTotal.toLocaleString()}<small>{chartMetric === 'workload' ? (isEn ? ' hrs' : ' 小时') : (isEn ? ' people' : ' 人')}</small></strong>{hasTrendData && <span className="trend-up"><TrendingUp size={14} />{isEn ? `avg ${monthlyAverage}` : `月均 ${monthlyAverage}`}</span>}<span>{chartMetric === 'workload' ? (isEn ? 'Annual workload' : '年度累计工作量') : (isEn ? 'Participating people' : '参与人数累计')}</span></div>
-        {hasTrendData ? <div className="area-chart"><ResponsiveContainer width="100%" height="100%"><AreaChart data={trendData} margin={{ top: 10, right: 8, left: -22, bottom: 0 }}><defs><linearGradient id="redArea" x1="0" y1="0" x2="0" y2="1"><stop offset="0%" stopColor="#d4261a" stopOpacity={0.14} /><stop offset="100%" stopColor="#d4261a" stopOpacity={0} /></linearGradient></defs><CartesianGrid vertical={false} stroke="rgba(30,26,21,.10)" strokeDasharray="0" /><XAxis dataKey="month" axisLine={false} tickLine={false} tick={{ fill: '#7b7266', fontSize: 11 }} dy={8} /><YAxis axisLine={false} tickLine={false} tick={{ fill: '#7b7266', fontSize: 11 }} /><Tooltip content={<CustomTooltip unit={chartMetric === 'workload' ? 'h' : ''} />} /><Area type="monotone" dataKey={chartMetric} name={chartMetric === 'workload' ? t('workload') : t('activePeople')} stroke="#d4261a" strokeWidth={2} fill="url(#redArea)" activeDot={{ r: 4, fill: '#d4261a', stroke: '#fffdf8', strokeWidth: 2 }} /></AreaChart></ResponsiveContainer></div> : <div className="chart-empty"><span>暂无逐月记录</span><small>任务、月报与积分流水产生后，这里会显示逐月曲线</small></div>}
+        {hasTrendData ? <Suspense fallback={<ChartFallback />}><Charts.TrendChart data={trendData} metric={chartMetric} name={chartMetric === 'workload' ? t('workload') : t('activePeople')} unit={chartMetric === 'workload' ? 'h' : ''} /></Suspense> : <div className="chart-empty"><span>暂无逐月记录</span><small>任务、月报与积分流水产生后，这里会显示逐月曲线</small></div>}
       </div>
 
       <div className="card leaderboard-card">
@@ -1802,7 +1805,7 @@ function AnalyticsPage({ teams, monthlyTrend = [], transactions = [], tasks = []
     : [['年度总任务数', String(totals.tasks), '项', '来自任务记录'], ['已完成任务', String(totals.done), '项', `完成率 ${totals.tasks ? Math.round(totals.done / totals.tasks * 100) : 0}%`], ['在编成员', String(members.length), '人', '成员档案中标为在编'], ['有参与记录成员', String(participated), '人', '本年度有任务或积分'], ['已入账积分', String(typeSum), '分', '来自积分流水']];
   return <div className="page"><PageTitle title={t('analyticsTitle')} subtitle={t('analyticsSubtitle')} actions={<><span className="static-year"><CalendarDays size={15} />{t('year2026')}</span><Button variant="secondary" icon={FileSpreadsheet} onClick={() => exportCsv(isEn ? 'Annual Analytics' : '年度统计分析')}>{t('exportReport')}</Button></>} />
     <div className="analytics-highlight"><div><span>{t('participationRateAnnual')}</span><strong>{participationRate}%</strong><p>{isEn ? `${participated} of ${members.length} active members recorded` : `${members.length} 位在编成员中 ${participated} 位有记录`}</p></div><div className="participation-bars">{monthlyTrend.map((item, index) => <div key={index}><span style={{ height: `${Math.round((Number(item.active) || 0) / maxActive * 100)}%` }} /><small>{item.month}</small></div>)}</div><div className="highlight-side"><span>{t('annualResults')}</span><strong>{totals.tasks}<small>{isEn ? ' items' : ' 项'}</small></strong><p>{isEn ? `${teams.length} teams tracked` : `涵盖 ${teams.length} 个团队`}</p></div></div>
-    <div className="analytics-grid"><div className="card analytics-bar-card"><div className="card-header"><div><h2>{t('teamComparison')}</h2><p>{t('teamComparisonSub')}</p></div><div className="segmented small"><button className={dimension === '团队工作量' ? 'active' : ''} onClick={() => setDimension('团队工作量')}>{t('workload')}</button><button className={dimension === '团队积分' ? 'active' : ''} onClick={() => setDimension('团队积分')}>{t('teamPoints')}</button></div></div><div className="bar-chart-large"><ResponsiveContainer width="100%" height="100%"><BarChart data={teamChart} margin={{ top: 15, right: 5, left: -22, bottom: 0 }}><CartesianGrid vertical={false} stroke="#ececea" strokeDasharray="3 3" /><XAxis dataKey="name" axisLine={false} tickLine={false} tick={{ fontSize: 12, fill: '#777772' }} /><YAxis axisLine={false} tickLine={false} tick={{ fontSize: 11, fill: '#999994' }} /><Tooltip content={<CustomTooltip />} /><Bar dataKey={dimension === '团队积分' ? 'points' : 'value'} name={dimension === '团队积分' ? t('teamPoints') : t('workload')} radius={[5, 5, 0, 0]} maxBarSize={40}>{teamChart.map((entry, index) => <Cell key={index} fill={index === 0 ? '#e62b1e' : '#deded9'} />)}</Bar></BarChart></ResponsiveContainer></div></div><div className="card points-distribution"><div className="card-header"><div><h2>{t('pointsDistribution')}</h2><p>{t('pointsDistributionSub')}</p></div></div>{pieData.length ? <><div className="distribution-chart"><ResponsiveContainer width="100%" height="100%"><PieChart><Pie data={pieData} dataKey="value" innerRadius={58} outerRadius={82} paddingAngle={4} stroke="none">{pieData.map((entry, index) => <Cell key={index} fill={entry.color} />)}</Pie><Tooltip /></PieChart></ResponsiveContainer><div><strong>{typeSum.toLocaleString()}</strong><span>{t('annualPoints')}</span></div></div><div className="distribution-legend">{pieData.map(item => <div key={item.name}><i style={{ background: item.color }} /><span>{displayValue(item.name, language)}</span><strong>{Math.round(item.value / typeSum * 100)}%</strong></div>)}</div></> : <EmptyState title={isEn ? 'No points records yet' : '暂无积分流水'} description={isEn ? 'The distribution appears once points are credited.' : '积分入账后，这里会按类型显示真实分布。'} />}</div></div>
+    <div className="analytics-grid"><div className="card analytics-bar-card"><div className="card-header"><div><h2>{t('teamComparison')}</h2><p>{t('teamComparisonSub')}</p></div><div className="segmented small"><button className={dimension === '团队工作量' ? 'active' : ''} onClick={() => setDimension('团队工作量')}>{t('workload')}</button><button className={dimension === '团队积分' ? 'active' : ''} onClick={() => setDimension('团队积分')}>{t('teamPoints')}</button></div></div><Suspense fallback={<ChartFallback />}><Charts.TeamBarChart data={teamChart} dataKey={dimension === '团队积分' ? 'points' : 'value'} name={dimension === '团队积分' ? t('teamPoints') : t('workload')} /></Suspense></div><div className="card points-distribution"><div className="card-header"><div><h2>{t('pointsDistribution')}</h2><p>{t('pointsDistributionSub')}</p></div></div>{pieData.length ? <><Suspense fallback={<ChartFallback />}><Charts.PointsPieChart data={pieData} /></Suspense><div><strong>{typeSum.toLocaleString()}</strong><span>{t('annualPoints')}</span></div><div className="distribution-legend">{pieData.map(item => <div key={item.name}><i style={{ background: item.color }} /><span>{displayValue(item.name, language)}</span><strong>{Math.round(item.value / typeSum * 100)}%</strong></div>)}</div></> : <EmptyState title={isEn ? 'No points records yet' : '暂无积分流水'} description={isEn ? 'The distribution appears once points are credited.' : '积分入账后，这里会按类型显示真实分布。'} />}</div></div>
     <div className="card annual-summary"><div className="card-header"><div><h2>{t('annualSummary')}</h2><p>{t('annualSummarySub')}</p></div><span className="updated-time"><CircleCheck size={14} />{isEn ? `Updated ${lastUpdated}` : `数据更新于 ${lastUpdated}`}</span></div><div className="annual-summary-grid">{summaryItems.map(([label, value, unit, note]) => <div key={label}><span>{label}</span><strong>{value}<small>{unit}</small></strong><p>{note}</p></div>)}</div></div>
   </div>;
 }
@@ -3086,21 +3089,9 @@ function TeamDetail({ team, reports = [], tasks = [], members = [], onClose, nav
       <div className="team-detail-chart">
         <h3>{L('近 6 个月工作量', 'Workload · last 6 months')}</h3>
         {hasSeries ? (
-          <ResponsiveContainer width="100%" height={190}>
-            <AreaChart data={series}>
-              <defs>
-                <linearGradient id="teamAreaReal" x1="0" y1="0" x2="0" y2="1">
-                  <stop offset="0" stopColor={team.color} stopOpacity={0.25} />
-                  <stop offset="1" stopColor={team.color} stopOpacity={0} />
-                </linearGradient>
-              </defs>
-              <CartesianGrid vertical={false} stroke="#eee" />
-              <XAxis dataKey="month" axisLine={false} tickLine={false} tick={{ fontSize: 11 }} />
-              <YAxis axisLine={false} tickLine={false} tick={{ fontSize: 11 }} />
-              <Tooltip />
-              <Area type="monotone" dataKey="value" stroke={team.color} fill="url(#teamAreaReal)" strokeWidth={2.3} />
-            </AreaChart>
-          </ResponsiveContainer>
+          <Suspense fallback={<ChartFallback />}>
+            <Charts.TeamWorkloadChart data={series} color={team.color} />
+          </Suspense>
         ) : (
           <EmptyState title={L('暂无工作量记录', 'No workload records yet')} description={L('成员提交月报或登记任务工时后，这里会显示真实曲线。', 'The chart appears once reports or task hours are recorded.')} />
         )}

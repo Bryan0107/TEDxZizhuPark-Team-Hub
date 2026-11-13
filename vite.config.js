@@ -11,4 +11,19 @@ export default defineConfig({
     host: '127.0.0.1',
     ...(apiProxy ? { proxy: { '/api': { target: apiProxy, changeOrigin: false } } } : {}),
   },
+  build: {
+    rollupOptions: {
+      output: {
+        // 把重依赖拆成独立 chunk：主包只留业务代码，首屏更快；
+        // vendor 变化频率低，二次访问可命中缓存。Rolldown 需要函数形式。
+        manualChunks(id) {
+          if (id.includes('node_modules/recharts')) return 'vendor-charts';
+          if (id.includes('node_modules/lucide-react')) return 'vendor-icons';
+          if (id.includes('node_modules/appwrite')) return 'vendor-appwrite';
+          if (id.includes('node_modules/react') || id.includes('node_modules/scheduler')) return 'vendor-react';
+          return undefined;
+        },
+      },
+    },
+  },
 });
