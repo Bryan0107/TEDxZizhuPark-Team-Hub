@@ -890,3 +890,6 @@ button:focus-visible,input:focus-visible,select:focus-visible,textarea:focus-vis
 
 /* 概览卡里的状态词：比数字小一档，但仍在同一位置 */
 .metric-value .metric-text{font-size:19px;font-weight:500;letter-spacing:0;color:var(--ink)}
+
+/* 登录页飞书标识：用官方图形资源，不再用内联 path */
+.login-feishu .feishu-mark{width:20px;height:20px;object-fit:contain;flex:none;display:block;margin-left:1px}

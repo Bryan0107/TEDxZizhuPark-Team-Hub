@@ -597,7 +597,7 @@ function LoginPage({ onLogin, language, setLanguage }) {
         <button className="login-submit" type="submit" disabled={busy}>{busy ? t('signInLoading') : t('signInSubmit')}<ArrowUpRight size={17} /></button>
         <div className="login-divider"><span>{isEn ? 'or' : '或'}</span></div>
         <a className="login-feishu" href="/api/feishu/oauth/start">
-          <svg width="17" height="17" viewBox="0 0 24 24" aria-hidden="true"><path fill="currentColor" d="M3.4 5.2c2.6-1.5 5.2-.6 6.6.7 1.2 1.1 2 2.6 2.9 4 .5.8 1 1.6 1.6 2.3-1.2.9-2.6 1.5-4.1 1.5-2.6 0-4.6-1.4-5.9-3.3-1-1.4-1.5-3.2-1.1-5.2ZM13.7 14.2c1.4.9 2.9 1.4 4.4 1.4 1.4 0 2.6-.4 3.5-1.1.5 1.3.3 2.6-.5 3.7-1 1.3-2.7 2-4.4 1.9-1.6-.1-3-.9-4.1-2 .3-.6.7-1.3 1.1-1.9ZM14.6 9.3c-.7-1.1-1.5-2.2-2.5-3.1-1.5-1.4-3.4-2.2-5.4-2.1 1.1-1 2.6-1.4 4-1.1 1.7.3 3.1 1.5 3.9 3 .4.8.6 1.7.6 2.6 0 .2 0 .5-.1.7h-.5Z"/></svg>
+          <img className="feishu-mark" src="/assets/feishu-mark.png" alt="" width="20" height="20" />
           <span>{isEn ? 'Sign in with Feishu' : '使用飞书登录'}</span>
           <ArrowUpRight size={15} />
         </a>
