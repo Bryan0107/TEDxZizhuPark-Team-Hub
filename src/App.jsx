@@ -219,7 +219,7 @@ function pageFromPath(pathname = window.location.pathname) {
 
 const ROLE_PAGES = {
   admin: ['dashboard', 'myPoints', 'reports', 'tasks', 'teams', 'members', 'pointsManagement', 'analytics', 'settings', 'hallAdmin'],
-  leader: ['dashboard', 'myPoints', 'reports', 'tasks', 'teams', 'members', 'analytics', 'settings'],
+  leader: ['dashboard', 'myPoints', 'reports', 'tasks', 'teams', 'members', 'pointsManagement', 'analytics', 'settings'],
   member: ['dashboard', 'myPoints', 'teams', 'settings'],
 };
 
@@ -760,6 +760,20 @@ function MainApp({ session, onLogout, onSessionUpdate, language, setLanguage }) 
     return activeMembers.map(m => ({ ...m, points: totals.get(m.name) ?? 0 }));
   }, [activeMembers, transactions]);
 
+  /**
+   * 飞书通知统一出口：失败或未发送时明确提示，避免"以为发了其实没发"。
+   * 服务端即便失败也返回 200（避免影响业务），所以这里要看 status。
+   */
+  const pushFeishu = async (eventType, payload) => {
+    const res = await notifyFeishu(eventType, payload);
+    const state = res?.status;
+    if (!res || res.ok === false || state === 'failed' || state === 'skipped') {
+      const reason = res?.reason || res?.error || state || (isEn ? 'unknown' : '未知原因');
+      notify(isEn ? `Feishu notice not delivered: ${reason}` : `飞书通知未送达：${reason}`);
+    }
+    return res;
+  };
+
   /** 任务积分入账：按任务 id 生成唯一流水，重复调用不会重复记账。 */
   const creditTaskPoints = (task, { silent = false } = {}) => {
     const points = Number(task?.points) || 0;
@@ -786,7 +800,7 @@ function MainApp({ session, onLogout, onSessionUpdate, language, setLanguage }) 
     }, ...prev]);
     if (!silent) notify(`已为 ${owner} 记入 ${points} 分`);
     // 入账即通过飞书机器人通知（失败不影响业务）
-    notifyFeishu('points.created', {
+    pushFeishu('points.created', {
       title: '任务积分入账',
       summary: `任务「${task.title || ''}」已完成，积分已记入负责人账户。`,
       fields: [['成员', owner], ['所属团队', task.team || '—'], ['积分变化', `+${points}`], ['来源', `任务完成：${task.title || ''}`]],
@@ -930,7 +944,7 @@ function MainApp({ session, onLogout, onSessionUpdate, language, setLanguage }) 
     case 'teams': content = <TeamsPage teams={teamView} members={activeMembers} {...shared} />; break;
     case 'members': content = <MembersPage members={members} setMembers={setMembers} teams={teams} reserves={reserves} setReserves={setReserves} transactions={transactions} tasks={tasks} {...shared} />; break;
     case 'myPoints': content = <MyPointsPage transactions={transactions} tasks={tasks} teams={teams} {...shared} />; break;
-    case 'pointsManagement': content = <PointsManagement transactions={transactions} setTransactions={setTransactions} members={activeMembersWithPoints} {...shared} />; break;
+    case 'pointsManagement': content = <PointsManagement transactions={transactions} setTransactions={setTransactions} members={activeMembersWithPoints} isAdmin={role === 'admin'} {...shared} />; break;
     case 'analytics': content = <AnalyticsPage teams={teamView} monthlyTrend={monthlyTrend} transactions={transactions} tasks={tasks} members={activeMembers} {...shared} />; break;
     case 'hallAdmin': content = <HallAdmin notify={notify} lang={language} />; break;
     case 'settings': content = <SettingsPage {...shared} notifications={notifications} myTeam={myMember?.team || ''} session={session} role={role} orgSettings={orgSettings} onOrgSettings={setOrgSettings} onSessionUpdate={onSessionUpdate} language={language} teams={teamView} members={members} tasks={tasks} reports={reports} transactions={transactions} reserves={reserves} />; break;
@@ -1090,7 +1104,7 @@ function MainApp({ session, onLogout, onSessionUpdate, language, setLanguage }) 
     })()}
     {modal?.type === 'newMember' && <MemberForm teams={teams} defaultTeam={myMember?.team || ''} onClose={closeModal} onSave={member => { setMembers(prev => [...prev, { ...member, id: Date.now(), points: 0, monthPoints: 0, tasks: 0, events: 0, status: '正常', member_status: 'active' }]); closeModal(); notify(`已邀请 ${member.name} 加入 Team Hub`); }} />}
     {modal?.type === 'reserveForm' && <ReserveForm teams={teams} isEn={isEn} onClose={closeModal} onSave={form => { setReserves(prev => [{ ...form, id: Date.now(), created: new Date().toLocaleDateString('zh-CN') }, ...prev]); closeModal(); notify(isEn ? 'Added to the reserve volunteer roster' : '已加入后备现场志愿者档案'); }} />}
-    {modal?.type === 'pointsAdjust' && <PointsAdjust members={members} onClose={closeModal} onSave={tx => {
+    {modal?.type === 'pointsAdjust' && role === 'admin' && <PointsAdjust members={activeMembersWithPoints} onClose={closeModal} onSave={tx => {
       const record = { ...tx, id: `PT${Date.now()}`, date: '刚刚' };
       setTransactions(prev => [record, ...prev]);
       closeModal();
@@ -1099,7 +1113,7 @@ function MainApp({ session, onLogout, onSessionUpdate, language, setLanguage }) 
         return;
       }
       notify('积分调整已入账，操作已记入审计日志');
-      notifyFeishu('points.created', { title: '积分变动通知', summary: 'Team Hub 中记录了一条已入账的积分流水。', fields: [['成员', record.member || '—'], ['所属团队', record.team || '—'], ['积分变化', `${record.points > 0 ? '+' : ''}${record.points ?? 0}`], ['来源', record.source || '—'], ['原因', record.reason || '—'], ['操作人', displayName]] });
+      pushFeishu('points.created', { title: '积分变动通知', summary: 'Team Hub 中记录了一条已入账的积分流水。', fields: [['成员', record.member || '—'], ['所属团队', record.team || '—'], ['积分变化', `${record.points > 0 ? '+' : ''}${record.points ?? 0}`], ['来源', record.source || '—'], ['原因', record.reason || '—'], ['操作人', displayName]] });
     }} />}
     {modal?.type === 'teamDetail' && (() => {
       const liveTeam = teamView.find(t => t.id === modal.data.id) || modal.data;
@@ -1564,7 +1578,7 @@ function MyPointsPage({ transactions, tasks, teams, navigate, exportCsv, t, isEn
   </div>;
 }
 
-function PointsManagement({ transactions, setTransactions, members, setModal, exportCsv, notify, navigate, t, isEn, language }) {
+function PointsManagement({ transactions, setTransactions, members, setModal, exportCsv, notify, navigate, t, isEn, language, isAdmin = false }) {
   const [tab, setTab] = useState('积分流水');
   const totalPoints = transactions.reduce((sum, tx) => sum + (Number(tx.points) || 0), 0);
   const pendingPoints = transactions.filter(tx => tx.status === '待审核').reduce((sum, tx) => sum + (Number(tx.points) || 0), 0);
@@ -1579,23 +1593,29 @@ function PointsManagement({ transactions, setTransactions, members, setModal, ex
   }, []);
   // 积分审核：待审核 → 已入账 / 已取消，入账后通过飞书机器人通知。
   const reviewTransaction = (tx, approve) => {
+    if (!isAdmin) { notify(isEn ? 'Only a super admin can approve or reject points' : '只有超级管理员可以审核或驳回积分'); return; }
     setTransactions(prev => prev.map(item => item.id === tx.id ? { ...item, status: approve ? '已入账' : '取消' } : item));
     if (approve) {
       notify(isEn ? `Credited ${tx.points} pts to ${tx.member}` : `已审核入账：${tx.member} ${Number(tx.points) > 0 ? '+' : ''}${tx.points} 分`);
-      notifyFeishu('points.reviewed', {
+      pushFeishu('points.reviewed', {
         title: '积分审核通过',
         summary: '一条待审核积分流水已审核并入账。',
-        fields: [['成员', tx.member], ['所属团队', tx.team || '—'], ['积分变化', `${Number(tx.points) > 0 ? '+' : ''}${tx.points}`], ['类型', tx.type || '—'], ['来源', tx.source || '—']],
+        fields: [['成员', tx.member], ['所属团队', tx.team || '—'], ['积分变化', `${Number(tx.points) > 0 ? '+' : ''}${tx.points}`], ['类型', tx.type || '—'], ['来源', tx.source || '—'], ['操作人', displayName]],
       });
     } else {
       notify(isEn ? `Rejected the pending points of ${tx.member}` : `已驳回 ${tx.member} 的待审核积分流水`);
+      pushFeishu('points.reviewed', {
+        title: '积分审核被驳回',
+        summary: '一条待审核积分流水被驳回，未入账。',
+        fields: [['成员', tx.member], ['所属团队', tx.team || '—'], ['积分变化', `${Number(tx.points) > 0 ? '+' : ''}${tx.points}`], ['来源', tx.source || '—'], ['操作人', displayName]],
+      });
     }
   };
   const tabs = [['积分流水', t('pointTransactions')], ['积分规则', t('pointsRules')], ['排行榜', t('leaderboard')]];
-  return <div className="page"><PageTitle title={t('pointsManagementTitle')} subtitle={t('pointsManagementSubtitle')} actions={<><Button variant="secondary" icon={SlidersHorizontal} onClick={() => navigate('settings')}>{t('ruleSettings')}</Button><Button icon={Plus} onClick={() => setModal({ type: 'pointsAdjust' })}>{t('adjustPoints')}</Button></>} />
+  return <div className="page"><PageTitle title={t('pointsManagementTitle')} subtitle={t('pointsManagementSubtitle')} actions={<>{isAdmin && <Button variant="secondary" icon={SlidersHorizontal} onClick={() => navigate('settings')}>{t('ruleSettings')}</Button>}{isAdmin ? <Button icon={Plus} onClick={() => setModal({ type: 'pointsAdjust' })}>{t('adjustPoints')}</Button> : <span className="admin-note">{isEn ? 'View only — only a super admin can adjust points' : '只读视图 · 积分调整与审核仅超级管理员可操作'}</span>}</>} />
     <div className="metrics-grid compact"><MiniStat label={t('annualDistributed')} value={totalPoints.toLocaleString()} suffix={isEn ? 'pts' : '分'} icon={Coins} note={isEn ? 'From credited transactions' : '来自已入账流水'} /><MiniStat label={t('monthlyDistributed')} value={String(transactions.length)} suffix={isEn ? 'records' : '条'} icon={CircleCheck} tone="green" note={isEn ? 'Total transactions' : '积分流水总数'} /><MiniStat label={t('pointsPendingReview')} value={String(pendingPoints)} suffix={isEn ? 'pts' : '分'} icon={Clock3} tone="amber" note={isEn ? 'Awaiting review' : '等待管理员审核'} /><MiniStat label={t('averageAnnualPoints')} value={averagePoints} suffix={isEn ? 'pts' : '分'} icon={TrendingUp} tone="blue" note={isEn ? 'Average per transaction' : '每条流水平均积分'} /></div>
     <div className="card table-card"><div className="table-toolbar"><div className="filter-tabs">{tabs.map(([key, label]) => <button key={key} className={tab === key ? 'active' : ''} onClick={() => setTab(key)}>{label}</button>)}</div>{tab === '积分流水' && <div className="toolbar-right"><span className="static-year"><CalendarDays size={15} />{t('year2026')}</span><Button variant="secondary" icon={Download} onClick={() => exportCsv(isEn ? 'Point Transactions' : '积分流水')}>{isEn ? 'Export Transactions' : '导出流水'}</Button></div>}</div>
-      {tab === '积分流水' && <><div className="table-wrap"><table className="data-table"><thead><tr><th>{t('member')}</th><th>{t('pointsSource')}</th><th>{t('pointsType')}</th><th>{t('points')}</th><th>{t('time')}</th><th>{t('status')}</th><th /></tr></thead><tbody>{transactions.map(tx => <tr key={tx.id}><td><div className="simple-person"><Avatar name={tx.member} size="xs" /><strong>{tx.member}</strong></div></td><td><strong>{tx.source}</strong><small className="transaction-id">{tx.id} · {tx.team}</small></td><td><StatusBadge>{tx.type}</StatusBadge></td><td><strong className={tx.points >= 0 ? 'positive-points' : 'negative-points'}>{tx.points > 0 ? '+' : ''}{tx.points}</strong></td><td className="muted">{tx.date}</td><td><StatusBadge>{tx.status}</StatusBadge></td><td><div className="row-actions">{tx.status === '待审核' ? <><button onClick={() => reviewTransaction(tx, true)}><Check size={14} />{isEn ? 'Approve' : '审核入账'}</button><button onClick={() => reviewTransaction(tx, false)}>{isEn ? 'Reject' : '驳回'}</button></> : <span className="muted">—</span>}</div></td></tr>)}</tbody></table></div><div className="table-footer"><span><LockKeyhole size={13} />{isEn ? 'Transactions cannot be deleted; use reversing adjustments' : '积分流水不可删除，仅支持反向调整'}</span><span>{isEn ? `${transactions.length} recent records` : `共 ${transactions.length} 条近期记录`}</span></div></>}
+      {tab === '积分流水' && <><div className="table-wrap"><table className="data-table"><thead><tr><th>{t('member')}</th><th>{t('pointsSource')}</th><th>{t('pointsType')}</th><th>{t('points')}</th><th>{t('time')}</th><th>{t('status')}</th><th /></tr></thead><tbody>{transactions.map(tx => <tr key={tx.id}><td><div className="simple-person"><Avatar name={tx.member} size="xs" /><strong>{tx.member}</strong></div></td><td><strong>{tx.source}</strong><small className="transaction-id">{tx.id} · {tx.team}</small></td><td><StatusBadge>{tx.type}</StatusBadge></td><td><strong className={tx.points >= 0 ? 'positive-points' : 'negative-points'}>{tx.points > 0 ? '+' : ''}{tx.points}</strong></td><td className="muted">{tx.date}</td><td><StatusBadge>{tx.status}</StatusBadge></td><td><div className="row-actions">{isAdmin && tx.status === '待审核' ? <><button onClick={() => reviewTransaction(tx, true)}><Check size={14} />{isEn ? 'Approve' : '审核入账'}</button><button onClick={() => reviewTransaction(tx, false)}>{isEn ? 'Reject' : '驳回'}</button></> : <span className="muted">—</span>}</div></td></tr>)}</tbody></table></div><div className="table-footer"><span><LockKeyhole size={13} />{isEn ? 'Transactions cannot be deleted; use reversing adjustments' : '积分流水不可删除，仅支持反向调整'}</span><span>{isEn ? `${transactions.length} recent records` : `共 ${transactions.length} 条近期记录`}</span></div></>}
       {tab === '积分规则' && <div className="rules-content"><div className="rules-note"><Info size={17} /><span>{isEn ? 'Rules calculate suggested report points. Changes only affect future records.' : '以下规则用于自动计算月报建议积分。修改规则仅影响之后的记录，不会追溯调整历史积分。'}</span><Button variant="secondary" onClick={() => navigate('settings')}>{isEn ? 'Edit in Settings' : '去系统设置中编辑'}</Button></div>{rules.length ? <table className="data-table"><thead><tr><th>{t('contributionAction')}</th><th>{t('pointsType')}</th><th>{t('defaultPoints')}</th><th>{t('scoringUnit')}</th><th>{t('enabled')}</th></tr></thead><tbody>{rules.map(rule => <tr key={rule.id}><td><strong>{rule.action}</strong></td><td><StatusBadge>{rule.type}</StatusBadge></td><td><strong className="positive-points">{Number(rule.points) > 0 ? `+${rule.points}` : rule.points}</strong></td><td>{rule.unit || '—'}</td><td><span className={`toggle ${rule.enabled === false ? '' : 'on'}`}><i /></span></td></tr>)}</tbody></table> : <EmptyState title={isEn ? 'No points rules yet' : '尚未配置积分规则'} description={isEn ? 'Add rules in Settings → Points rules.' : '在「系统设置 → 积分规则」中新增规则后，这里会显示真实配置。'} />}</div>}
       {tab === '排行榜' && <div className="ranking-content"><div className="ranking-note"><Info size={16} />{isEn ? 'The leaderboard recognizes contribution and is not the only measure of member value. Admins can control visibility in settings.' : '排行榜用于认可贡献，不作为成员价值的唯一评价标准。管理员可在系统设置中控制展示范围。'}</div>{ranked.length ? <div className="podium">{ranked.map((member, index) => <div className={`podium-item place-${index + 1}`} key={member.id}><div className="podium-avatar"><Avatar name={member.name} src={member.avatar} /><span>{index + 1}</span></div><strong>{member.name}</strong><small>{member.team}</small><b>{member.points}<em>{isEn ? 'pts' : '分'}</em></b><div style={{ height: `${[112, 142, 92][index]}px` }} /></div>)}</div> : <EmptyState title={isEn ? 'No rankings yet' : '暂无积分排名'} description={isEn ? 'Rankings appear once members earn points.' : '成员产生积分后，这里会显示排行榜。'} />}</div>}
     </div>
@@ -2862,12 +2882,16 @@ function PointsAdjust({ members, onClose, onSave }) {
   const [form, setForm] = useState({ member: '', team: '', type: '特别贡献', source: '', points: '5', direction: '增加积分', status: '已入账', reason: '' });
   const [error, setError] = useState('');
   const submit = () => {
-    if (!form.member || !form.source || !form.reason) { setError('请填写成员、积分来源与调整原因，确保记录可追溯'); return; }
+    const picked = resolveMember(members, form.member);
+    if (!picked) { setError('请从成员名册中选择成员，手写姓名会记不到人'); return; }
+    if (!form.source || !form.reason) { setError('请填写积分来源与调整原因，确保记录可追溯'); return; }
     const points = Math.abs(Number(form.points) || 0);
     if (!points) { setError('请填写大于 0 的积分数'); return; }
-    onSave({ ...form, points: form.direction === '扣减积分' ? -points : points });
+    onSave({ ...form, member: picked.name, team: picked.team || form.team, points: form.direction === '扣减积分' ? -points : points });
   };
-  return <Modal title="手动调整积分" subtitle="所有调整将生成新流水并保留操作记录" onClose={onClose} footer={<><Button variant="secondary" onClick={onClose}>取消</Button><Button icon={Check} onClick={submit}>{form.status === '待审核' ? '提交待审核' : '确认调整并入账'}</Button></>}><div className="adjust-warning"><Info size={17} /><span>历史积分流水不可直接删除。如需修正，请通过反向调整生成补充流水。</span></div><div className="form-grid"><Field label="调整成员" required full><input value={form.member} onChange={e => setForm(prev => ({ ...prev, member: e.target.value }))} placeholder="填写成员姓名" /></Field><Field label="调整方向"><div className="radio-group"><button className={form.direction === '增加积分' ? 'selected' : ''} onClick={() => setForm(prev => ({ ...prev, direction: '增加积分' }))}><i />增加积分</button><button className={form.direction === '扣减积分' ? 'selected' : ''} onClick={() => setForm(prev => ({ ...prev, direction: '扣减积分' }))}><i />扣减积分</button></div></Field><Field label="调整积分" required><div className="number-input"><input type="text" inputMode="numeric" autoComplete="off" placeholder="0" value={form.points} onChange={e => setForm(prev => ({ ...prev, points: e.target.value.replace(/[^\d]/g, '').replace(/^0+(?=\d)/, '').slice(0, 4) }))} /><span>分</span></div></Field><Field label="积分类型"><select value={form.type} onChange={e => setForm(prev => ({ ...prev, type: e.target.value }))}><option>特别贡献</option><option>任务贡献</option><option>组织贡献</option><option>社区贡献</option></select></Field><Field label="入账方式" hint="选择「待审核」时，需在积分管理中审核通过后才入账并通知"><div className="radio-group"><button type="button" className={form.status === '已入账' ? 'selected' : ''} onClick={() => setForm(prev => ({ ...prev, status: '已入账' }))}><i />直接入账</button><button type="button" className={form.status === '待审核' ? 'selected' : ''} onClick={() => setForm(prev => ({ ...prev, status: '待审核' }))}><i />待审核</button></div></Field><Field label="关联团队"><input value={form.team} disabled /></Field><Field label="积分来源" required full><input placeholder="例如：年度大会紧急视觉物料支援" value={form.source} onChange={e => setForm(prev => ({ ...prev, source: e.target.value }))} /></Field><Field label="调整原因" required full><textarea rows="3" placeholder="请说明本次调整的具体原因，供成员与审计查看…" value={form.reason} onChange={e => setForm(prev => ({ ...prev, reason: e.target.value }))} /></Field>{error && <span className="field-error field-full">{error}</span>}</div></Modal>;
+  return <Modal title="手动调整积分" subtitle="所有调整将生成新流水并保留操作记录" onClose={onClose} footer={<><Button variant="secondary" onClick={onClose}>取消</Button><Button icon={Check} onClick={submit}>{form.status === '待审核' ? '提交待审核' : '确认调整并入账'}</Button></>}><div className="adjust-warning"><Info size={17} /><span>历史积分流水不可直接删除。如需修正，请通过反向调整生成补充流水。</span></div><div className="form-grid"><Field label="调整成员" required full hint={form.member ? `已选择：${form.member}` : '从成员名册中选择，积分才会记到对应的人'}>
+  <MemberPicker value={form.member} members={members} onChange={v => { const picked = resolveMember(members, v); setForm(prev => ({ ...prev, member: picked?.name || '', team: picked?.team || prev.team })); }} />
+</Field><Field label="调整方向"><div className="radio-group"><button className={form.direction === '增加积分' ? 'selected' : ''} onClick={() => setForm(prev => ({ ...prev, direction: '增加积分' }))}><i />增加积分</button><button className={form.direction === '扣减积分' ? 'selected' : ''} onClick={() => setForm(prev => ({ ...prev, direction: '扣减积分' }))}><i />扣减积分</button></div></Field><Field label="调整积分" required><div className="number-input"><input type="text" inputMode="numeric" autoComplete="off" placeholder="0" value={form.points} onChange={e => setForm(prev => ({ ...prev, points: e.target.value.replace(/[^\d]/g, '').replace(/^0+(?=\d)/, '').slice(0, 4) }))} /><span>分</span></div></Field><Field label="积分类型"><select value={form.type} onChange={e => setForm(prev => ({ ...prev, type: e.target.value }))}><option>特别贡献</option><option>任务贡献</option><option>组织贡献</option><option>社区贡献</option></select></Field><Field label="入账方式" hint="选择「待审核」时，需在积分管理中审核通过后才入账并通知"><div className="radio-group"><button type="button" className={form.status === '已入账' ? 'selected' : ''} onClick={() => setForm(prev => ({ ...prev, status: '已入账' }))}><i />直接入账</button><button type="button" className={form.status === '待审核' ? 'selected' : ''} onClick={() => setForm(prev => ({ ...prev, status: '待审核' }))}><i />待审核</button></div></Field><Field label="关联团队" hint="随成员自动带出"><input value={form.team} disabled placeholder="选择成员后自动填入" /></Field><Field label="积分来源" required full><input placeholder="例如：年度大会紧急视觉物料支援" value={form.source} onChange={e => setForm(prev => ({ ...prev, source: e.target.value }))} /></Field><Field label="调整原因" required full><textarea rows="3" placeholder="请说明本次调整的具体原因，供成员与审计查看…" value={form.reason} onChange={e => setForm(prev => ({ ...prev, reason: e.target.value }))} /></Field>{error && <span className="field-error field-full">{error}</span>}</div></Modal>;
 }
 function TeamDetail({ team, reports = [], tasks = [], members = [], onClose, navigate, isEn }) {
   const L = (zh, en) => (isEn ? en : zh);
