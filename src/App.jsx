@@ -174,6 +174,21 @@ const dictionaries = {
   }
 };
 
+/** 年度大会倒计时：数字按本地日期差计算，当天显示「今天」，过期显示「已办」。 */
+function EventCountdown({ isEn, date = new Date() }) {
+  const eventDate = new Date(ANNUAL_EVENT.year, ANNUAL_EVENT.month - 1, ANNUAL_EVENT.day);
+  const days = Math.round((eventDate - new Date(date.getFullYear(), date.getMonth(), date.getDate())) / 86400000);
+  const figure = days > 0 ? String(days) : days === 0 ? (isEn ? 'Today' : '今天') : (isEn ? 'Done' : '已办');
+  const unit = days > 0 ? (isEn ? 'days' : '天') : '';
+  return <div className="event-countdown" title={isEn ? `${days} days to the 10th annual conference` : `距第 10 届年度大会还有 ${days} 天`}>
+    <div className="event-countdown-copy">
+      <span className="event-countdown-kicker"><i className="cue" />{isEn ? 'TEDxZizhuPark 10th Annual Conference' : 'TEDxZizhuPark 10th 年度大会'}</span>
+      <small>{isEn ? 'April 25, 2027' : '2027 年 4 月 25 日'}</small>
+    </div>
+    <div className="event-countdown-figure"><strong>{figure}</strong>{unit ? <small>{unit}</small> : null}</div>
+  </div>;
+}
+
 /** 年度大会：首页倒计时以此为准（2027 年为第 10 届）。 */
 const ANNUAL_EVENT = { date: '2027-04-25', month: 4, day: 25, year: 2027 };
 
@@ -376,6 +391,43 @@ function renderGreeting({ language = 'zh', template = '', name = '', date = new 
   let text = template.replace(/\{name\}/g, name).replace(/\{time\}/g, time);
   if (!/\{name\}/.test(template) && name) text += language === 'en' ? ` ${name}` : ` ${name}`;
   return text.trim();
+}
+
+/** 内置问候语：按日期轮换，同一天固定同一条。新增文案直接往数组里加。 */
+const GREETING_LINES = {
+  zh: [
+    '今天状态怎么样',
+    '今天想先推进哪一件',
+    '慢一点也没关系，把重要的做完',
+    '有卡住的地方随时说',
+    '先看一眼进度，再决定从哪开始',
+    '今天也留一点时间给好想法',
+    '需要搭把手就在群里喊一声',
+    '把手头这件事做扎实就好',
+    '大会还早，节奏别乱',
+    '今天也谢谢你在这里',
+  ],
+  en: [
+    'How is today going',
+    'What will you move first',
+    'Slow is fine, finish what matters',
+    'Say the word if you are blocked',
+    'Check the progress, then pick a start',
+    'Leave a little room for good ideas',
+    'Ask in the group if you need a hand',
+    'One thing done well is enough',
+    'The conference is months out, keep a steady pace',
+    'Thanks for being here today',
+  ],
+};
+
+function dayOfYear(date = new Date()) {
+  return Math.floor((date - new Date(date.getFullYear(), 0, 0)) / 86400000);
+}
+
+function dailyGreetingLine(language = 'zh', date = new Date()) {
+  const list = GREETING_LINES[language] || GREETING_LINES.zh;
+  return list[dayOfYear(date) % list.length];
 }
 
 function greetingSubtitle(language, date = new Date()) {
@@ -601,17 +653,18 @@ function MainApp({ session, onLogout, onSessionUpdate, language, setLanguage }) 
   const personalTemplate = isEn
     ? (session?.prefs?.greetingEn || session?.prefs?.greeting || '')
     : (session?.prefs?.greeting || '');
-  const greetingText = renderGreeting({
-    language,
-    template: personalTemplate || orgSettings[language] || '',
-    name: displayName,
-  });
+  const greetingTemplate = personalTemplate || orgSettings[language] || '';
+  const greetingText = renderGreeting({ language, template: greetingTemplate, name: displayName });
+  // 每次进入都配一句内置问候（10 条按日期轮换），与上面的时段问候组成完整一句。
+  const greetingLine = dailyGreetingLine(language, new Date());
   useEffect(() => {
     let alive = true;
     fetchSettings().then(values => { if (alive) setOrgSettings(values); });
     return () => { alive = false; };
   }, []);
   const pageMeta = getPageMeta(t);
+  // 普通成员/组长看到的是个人工作台，不展示「年度驾驶舱」这个名字。
+  const pageMetaForRole = role === 'admin' ? pageMeta : { ...pageMeta, dashboard: [isEn ? 'My desk' : '我的工作台', ''] };
   // 全部展示用数据都由数据库真实记录推导，避免出现写死的示意数字。
   const activeMembers = useMemo(() => members.filter(m => m.member_status === 'active'), [members]);
   // 当前登录者对应的成员档案：左下角个人卡片要显示飞书头像，而不是字母占位。
@@ -816,7 +869,11 @@ function MainApp({ session, onLogout, onSessionUpdate, language, setLanguage }) 
     case 'analytics': content = <AnalyticsPage teams={teamView} monthlyTrend={monthlyTrend} transactions={transactions} tasks={tasks} members={activeMembers} {...shared} />; break;
     case 'hallAdmin': content = <HallAdmin notify={notify} lang={language} />; break;
     case 'settings': content = <SettingsPage {...shared} notifications={notifications} myTeam={myMember?.team || ''} session={session} role={role} orgSettings={orgSettings} onOrgSettings={setOrgSettings} onSessionUpdate={onSessionUpdate} language={language} teams={teamView} members={members} tasks={tasks} reports={reports} transactions={transactions} reserves={reserves} />; break;
-    default: content = <Dashboard teams={teamView} reports={reports} tasks={tasks} members={activeMembersWithPoints} transactions={transactions} monthlyTrend={monthlyTrend} greeting={greetingText} greetingSub={greetingSubtitle(language)} {...shared} />;
+    case 'dashboard': content = role === 'admin'
+      ? <Dashboard teams={teamView} reports={reports} tasks={tasks} members={activeMembersWithPoints} transactions={transactions} monthlyTrend={monthlyTrend} greeting={greetingText} greetingLine={greetingLine} {...shared} />
+      : <PersonalDashboard member={myMember} members={activeMembersWithPoints} tasks={tasks} reports={reports} transactions={transactions} role={role} greeting={greetingText} greetingLine={greetingLine} {...shared} />;
+      break;
+    default: content = <Dashboard teams={teamView} reports={reports} tasks={tasks} members={activeMembersWithPoints} transactions={transactions} monthlyTrend={monthlyTrend} greeting={greetingText} greetingLine={greetingLine} {...shared} />;
   }
 
   return <LanguageContext.Provider value={language}><div className="app-shell">
@@ -851,7 +908,7 @@ function MainApp({ session, onLogout, onSessionUpdate, language, setLanguage }) 
 
     <div className="main-shell">
       <header className="topbar">
-        <div className="topbar-left"><button className="mobile-menu icon-button" onClick={() => setSidebarOpen(true)}><Menu size={21} /></button><span className="breadcrumb-root">TEDx 紫竹</span><ChevronRight size={14} /><strong>{pageMeta[activePage][0]}</strong></div>
+        <div className="topbar-left"><button className="mobile-menu icon-button" onClick={() => setSidebarOpen(true)}><Menu size={21} /></button><span className="breadcrumb-root">TEDx 紫竹</span><ChevronRight size={14} /><strong>{pageMetaForRole[activePage][0]}</strong></div>
         <div className="topbar-right">
           <div className="global-search"><Search size={17} /><input value={search} onChange={e => setSearch(e.target.value)} onFocus={() => setSearchFocus(true)} placeholder={t('searchPlaceholder')} /><kbd>⌘ K</kbd>{searchFocus && search && <div className="search-results">{searchResults.length ? searchResults.map((r, i) => <button key={i} onClick={() => { r.action(); setSearch(''); setSearchFocus(false); }}><span>{r.type}</span><div><strong>{r.title}</strong><small>{r.subtitle}</small></div><ChevronRight size={15} /></button>) : <div className="search-empty">{isEn ? `No results for “${search}”` : `没有找到“${search}”相关内容`}</div>}</div>}</div>
           <div className="language-switcher"><button className="language-button" onClick={() => { setLanguageOpen(!languageOpen); setNotificationsOpen(false); }}><Globe2 size={16} /><span>{isEn ? 'English' : '中文'}</span><ChevronDown size={13} /></button>{languageOpen && <div className="language-menu">{[['zh', '中文', '简体中文'], ['en', 'English', 'English interface']].map(([key, label, hint]) => <button key={key} onClick={() => { setLanguage(key); setLanguageOpen(false); notify(key === 'en' ? 'Interface language updated' : '界面语言已切换'); }}><div><strong>{label}</strong><small>{hint}</small></div>{language === key && <Check size={15} />}</button>)}</div>}</div>
@@ -987,7 +1044,7 @@ function MainApp({ session, onLogout, onSessionUpdate, language, setLanguage }) 
   </div></LanguageContext.Provider>;
 }
 
-function Dashboard({ teams, reports, tasks, members, transactions, monthlyTrend = [], navigate, setModal, exportCsv, t, isEn, greeting, greetingSub }) {
+function Dashboard({ teams, reports, tasks, members, transactions, monthlyTrend = [], navigate, setModal, exportCsv, t, isEn, greeting, greetingLine = '' }) {
   const [chartMetric, setChartMetric] = useState('workload');
   const [teamFilter, setTeamFilter] = useState('全部团队');
   const shownTeams = teamFilter === '全部团队' ? teams : teams.filter(team => team.status === teamFilter);
@@ -1021,22 +1078,10 @@ function Dashboard({ teams, reports, tasks, members, transactions, monthlyTrend 
   const daysLeftLabel = isEn ? `${daysToDeadline} days until deadline` : `距截止还有 ${daysToDeadline} 天`;
   const cleanGreeting = String(greeting || '').replace(/[。.!！\s]+$/, '');
   const weekdayLabel = isEn ? nowDate.toLocaleDateString('en-US', { weekday: 'short' }) : `周${'日一二三四五六'[nowDate.getDay()]}`;
-  const pageHeading = isEn ? `${nowDate.toLocaleDateString('en-US', { month: 'long' })} · Team operations` : `${nowDate.getMonth() + 1} 月 · 团队运行`;
-  const pageSub = [cleanGreeting, `${nowDate.getMonth() + 1} 月 ${nowDate.getDate()} 日 ${weekdayLabel}`].filter(Boolean).join(' · ');
-  // 年度大会倒计时：按本地日期差计算，当天显示「今天」，过期后显示「已举办」。
-  const eventDate = new Date(ANNUAL_EVENT.year, ANNUAL_EVENT.month - 1, ANNUAL_EVENT.day);
-  const eventDays = Math.round((eventDate - new Date(nowDate.getFullYear(), nowDate.getMonth(), nowDate.getDate())) / 86400000);
-  const eventFigure = eventDays > 0 ? String(eventDays) : eventDays === 0 ? (isEn ? 'Today' : '今天') : (isEn ? 'Done' : '已办');
-  const eventUnit = eventDays > 0 ? (isEn ? 'days' : '天') : '';
+  const dateLabel = `${nowDate.getMonth() + 1} 月 ${nowDate.getDate()} 日 ${weekdayLabel}`;
 
   return <div className="page dashboard-page">
-    <PageTitle title={pageHeading} subtitle={pageSub} actions={<><div className="event-countdown" title={isEn ? `${eventDays} days to the 10th annual conference` : `距第 10 届年度大会还有 ${eventDays} 天`}>
-        <div className="event-countdown-copy">
-          <span className="event-countdown-kicker"><i className="cue" />{isEn ? 'TEDxZizhuPark 10th Annual Conference' : 'TEDxZizhuPark 10th 年度大会'}</span>
-          <small>{isEn ? 'April 25, 2027' : '2027 年 4 月 25 日'}</small>
-        </div>
-        <div className="event-countdown-figure"><strong>{eventFigure}</strong>{eventUnit ? <small>{eventUnit}</small> : null}</div>
-      </div><Button variant="secondary" icon={Download} onClick={() => exportCsv(isEn ? 'Annual Team Data' : '年度团队数据')}>{t('exportData')}</Button></>} />
+    <PageTitle title={cleanGreeting} subtitle={[greetingLine, dateLabel].filter(Boolean).join(' · ')} actions={<><EventCountdown isEn={isEn} date={nowDate} /><Button variant="secondary" icon={Download} onClick={() => exportCsv(isEn ? 'Annual Team Data' : '年度团队数据')}>{t('exportData')}</Button></>} />
 
     <section className="deadline-banner">
       <div className="deadline-copy"><div><strong>{reportCycleLabel}</strong><span className="cue-meta"><i className="cue" />{daysLeftLabel}</span></div><p>{isEn ? `${submitted} of ${teamCount} reports submitted. ${notSubmitted} teams have not started yet.` : `已提交 ${submitted} / ${teamCount} 份月报，还有 ${notSubmitted} 个团队尚未完成填报。`}</p></div>
@@ -1103,6 +1148,100 @@ function Dashboard({ teams, reports, tasks, members, transactions, monthlyTrend 
           <span className="activity-type">{task.status === '已完成' ? <CheckSquare size={16} /> : <Clock3 size={16} />}</span>
         </div>;
       })}</div> : <EmptyState title={isEn ? 'No activity yet' : '暂无团队动态'} description={isEn ? 'New tasks will show up here.' : '新建任务后，这里会记录团队动态。'} />}
+    </section>
+  </div>;
+}
+
+/**
+ * 普通成员 / 组长的首页：只呈现与自己有关的信息。
+ * 组织级的「年度驾驶舱」仅超级管理员可见（见 Dashboard）。
+ */
+function PersonalDashboard({ member, members = [], tasks = [], reports = [], transactions = [], role = 'member', navigate, setModal, isEn, greeting, greetingLine = '', nowDate = new Date() }) {
+  const L = (zh, en) => (isEn ? en : zh);
+  const zh = !isEn;
+  const mine = name => {
+    const hit = resolveMember(members, name);
+    return Boolean(hit && member && hit.id === member.id);
+  };
+  const myTx = transactions.filter(tx => mine(tx.member));
+  const totalPoints = myTx.reduce((sum, tx) => sum + (Number(tx.points) || 0), 0);
+  const thisMonth = nowDate.getMonth() + 1;
+  const monthPoints = myTx.filter(tx => monthIndex(tx) === thisMonth).reduce((sum, tx) => sum + (Number(tx.points) || 0), 0);
+  const myTasks = tasks.filter(task => mine(task.owner));
+  const openTasks = myTasks.filter(task => task.status !== '已完成');
+  const doneTasks = myTasks.filter(task => task.status === '已完成');
+  const myTeam = member?.team || '';
+  const teamMembers = members.filter(m => m.team === myTeam);
+  const teamTasks = tasks.filter(task => task.team === myTeam);
+  const teamDone = teamTasks.filter(task => task.status === '已完成').length;
+  const monthKey = `${thisMonth} 月`;
+  const teamReport = reports.find(r => r.team === myTeam && (!r.month || String(r.month).includes(`${thisMonth}`))) || reports.find(r => r.team === myTeam) || null;
+  const reportStatus = teamReport?.status || (zh ? '未开始' : 'Not started');
+  const ranked = members.map(m => ({
+    id: m.id,
+    points: transactions.filter(tx => { const hit = resolveMember(members, tx.member); return hit && hit.id === m.id; })
+      .reduce((sum, tx) => sum + (Number(tx.points) || 0), 0),
+  })).sort((a, b) => b.points - a.points);
+  const myRank = ranked.findIndex(row => row.id === member?.id) + 1;
+  const recent = teamTasks.slice(0, 4);
+  const weekdayLabel = isEn ? nowDate.toLocaleDateString('en-US', { weekday: 'short' }) : `周${'日一二三四五六'[nowDate.getDay()]}`;
+  const dateLabel = isEn
+    ? nowDate.toLocaleDateString('en-US', { month: 'short', day: 'numeric' })
+    : `${thisMonth} 月 ${nowDate.getDate()} 日 ${weekdayLabel}`;
+  const isLeader = role === 'leader';
+  const cleanGreeting = String(greeting || '').replace(/[。.!！\s]+$/, '');
+
+  return <div className="page dashboard-page">
+    <PageTitle title={cleanGreeting} subtitle={[greetingLine, dateLabel].filter(Boolean).join(' · ')} actions={<EventCountdown isEn={isEn} date={nowDate} />} />
+
+    <section className="metrics-grid">
+      {isLeader ? <>
+        <MiniStat label={L('本组在编成员', 'Team members')} value={String(teamMembers.length)} suffix={L('人', 'people')} note={myTeam || '—'} />
+        <MiniStat label={L('本组本月任务', 'Team tasks')} value={String(teamTasks.length)} suffix={L('项', 'tasks')} note={L(`已完成 ${teamDone} 项`, `${teamDone} completed`)} />
+        <MiniStat label={L('本组月报', 'Team report')} value={<span className="metric-text">{displayValue(reportStatus, isEn ? 'en' : 'zh')}</span>} note={L('本月填报状态', 'This month')} />
+        <MiniStat label={L('我的待办', 'My open tasks')} value={String(openTasks.length)} suffix={L('项', 'tasks')} note={L(`年度积分 ${totalPoints}`, `${totalPoints} pts this year`)} />
+      </> : <>
+        <MiniStat label={L('年度累计积分', 'Annual points')} value={String(totalPoints)} suffix={L('分', 'pts')} note={L('来自已入账流水', 'Credited transactions')} />
+        <MiniStat label={L('本月新增积分', 'This month')} value={String(monthPoints)} suffix={L('分', 'pts')} note={monthKey} />
+        <MiniStat label={L('我的待办', 'My open tasks')} value={String(openTasks.length)} suffix={L('项', 'tasks')} note={L(`已完成 ${doneTasks.length} 项`, `${doneTasks.length} completed`)} />
+        <MiniStat label={L('我在小组的排名', 'Team rank')} value={myRank && totalPoints > 0 ? `#${myRank}` : '—'} note={totalPoints > 0 ? (myTeam || '—') : L('有积分后显示排名', 'Appears once you earn points')} />
+      </>}
+    </section>
+
+    <section className="dashboard-main-grid">
+      <div className="card">
+        <div className="card-header"><div><h2>{L('我的任务', 'My tasks')}</h2><p>{L('由我负责、还没完成的工作', 'Work I own and have not finished')}</p></div></div>
+        {openTasks.length ? <div className="table-wrap"><table className="data-table"><thead><tr><th>{L('任务', 'Task')}</th><th>{L('所属团队', 'Team')}</th><th>{L('截止', 'Due')}</th><th>{L('状态', 'Status')}</th></tr></thead>
+          <tbody>{openTasks.slice(0, 6).map(task => <tr key={task.id}><td><div className="task-title-cell"><div><strong>{task.title}</strong><small>{task.project || '—'}</small></div></div></td><td>{task.team || '—'}</td><td className="muted">{task.due || '—'}</td><td><StatusBadge>{task.status}</StatusBadge></td></tr>)}</tbody>
+        </table></div> : <EmptyState title={L('暂无待办任务', 'No open tasks')} description={L('组长分配任务后，会出现在这里。', 'Tasks assigned to you will appear here.')} />}
+      </div>
+
+      <div className="card">
+        <div className="card-header"><div><h2>{L('本月状态', 'This month')}</h2><p>{myTeam || L('未分配团队', 'No team yet')}</p></div></div>
+        <ul className="report-rows">
+          <li><i className={`dot ${reportStatus === '已通过' ? 'green' : reportStatus === '待修改' ? 'red' : reportStatus === '审核中' ? 'amber' : 'gray'}`} /><span>{L('团队月报', 'Team report')}</span><b>{displayValue(reportStatus, isEn ? 'en' : 'zh')}</b></li>
+          <li><i className="dot gray" /><span>{L('我的年度积分', 'My points')}</span><b>{totalPoints}</b></li>
+          <li><i className="dot gray" /><span>{L('本月新增', 'This month')}</span><b>+{monthPoints}</b></li>
+          <li><i className="dot gray" /><span>{L('小组排名', 'Team rank')}</span><b>{myRank && totalPoints > 0 ? `${myRank} / ${members.length}` : '—'}</b></li>
+        </ul>
+        <button className="full-secondary-button" onClick={() => navigate('myPoints')}>{L('查看我的积分明细', 'View my points')}<ChevronRight size={14} /></button>
+        {isLeader && <button className="full-secondary-button" onClick={() => navigate('reports')}>{L('填写本组月报', 'Fill team report')}<ArrowUpRight size={14} /></button>}
+      </div>
+    </section>
+
+    <section className="card activity-card">
+      <div className="card-header"><div><h2>{L('团队动态', 'Team activity')}</h2><p>{L('本组正在发生的事', 'What is happening in my team')}</p></div></div>
+      {recent.length ? <div className="activity-list single">{recent.map(task => {
+        const owner = resolveMember(members, task.owner);
+        return <div className="activity-item" key={task.id}>
+          <Avatar name={owner?.name || task.owner || '?'} src={owner?.avatar} size="sm" />
+          <div>
+            <p><strong>{owner?.name || task.owner || '—'}</strong> {L(`负责「${task.title}」`, `owns “${task.title}”`)}</p>
+            <span>{task.team || '—'} · {displayValue(task.status, isEn ? 'en' : 'zh')}</span>
+          </div>
+          <span className="activity-type">{task.status === '已完成' ? <CheckSquare size={16} /> : <Clock3 size={16} />}</span>
+        </div>;
+      })}</div> : <EmptyState title={L('暂无团队动态', 'No team activity yet')} description={L('本组创建任务后，会显示在这里。', 'Team tasks will show up here.')} />}
     </section>
   </div>;
 }

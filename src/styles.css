@@ -874,3 +874,19 @@ button:focus-visible,input:focus-visible,select:focus-visible,textarea:focus-vis
 .year-switch select{flex:1;min-width:0;border:0;background:transparent;font:inherit;font-size:11.5px;font-weight:400;color:var(--muted);appearance:none;-webkit-appearance:none;outline:none;cursor:pointer;padding:0}
 .year-switch:focus-within{outline:2px solid var(--red);outline-offset:2px}
 .year-switch svg{color:var(--muted);flex:none}
+
+/* ---- 个人工作台 ---- */
+.activity-list.single{grid-template-columns:1fr}
+.dashboard-main-grid .card>.report-rows{padding-top:2px}
+.dashboard-main-grid .card>.full-secondary-button{width:calc(100% - 40px);margin:0 20px 10px}
+.dashboard-main-grid .card>.full-secondary-button:last-child{margin-bottom:16px}
+.personal-note{font-size:12px;color:var(--muted);padding:0 20px 16px}
+
+/* 个人工作台的空白态收紧，避免首屏出现大片空白 */
+.dashboard-page .empty-state{padding:30px 20px}
+.dashboard-page .empty-state>span{width:34px;height:34px;margin-bottom:10px}
+.dashboard-page .empty-state h3{font-size:13px}
+.dashboard-page .empty-state p{font-size:12px}
+
+/* 概览卡里的状态词：比数字小一档，但仍在同一位置 */
+.metric-value .metric-text{font-size:19px;font-weight:500;letter-spacing:0;color:var(--ink)}
