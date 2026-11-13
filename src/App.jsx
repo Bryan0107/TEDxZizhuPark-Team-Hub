@@ -554,7 +554,6 @@ function LoginPage({ onLogin, language, setLanguage }) {
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [error, setError] = useState('');
-  const [media, setMedia] = useState(null);
   const feishuNotice = (() => {
     try {
       const params = new URLSearchParams(window.location.search);
@@ -563,15 +562,21 @@ function LoginPage({ onLogin, language, setLanguage }) {
     return '';
   })();
   const [busy, setBusy] = useState(false);
+  // media === null 表示接口还没返回，此时先不渲染任何登录版式（避免经典版先闪现再切瀑布流），
+  // 而是用与最终版式一致的骨架占位；接口返回后一次性定稿。
+  const [media, setMedia] = useState(null);
+  const [mediaReady, setMediaReady] = useState(false);
 
   // 登录页样式与十周年影像都来自公开接口；无照片或样式为 classic 时退回经典两栏版。
   useEffect(() => {
     let alive = true;
+    const settle = data => { if (alive) { setMedia(data); setMediaReady(true); } };
+    const timer = setTimeout(() => settle({ style: 'classic', photos: [] }), 6000); // 6s 兜底，绝不无限等
     fetch('/api/hall/media')
       .then(res => res.json())
-      .then(data => { if (alive) setMedia(data && data.ok ? data : { style: 'classic', photos: [] }); })
-      .catch(() => { if (alive) setMedia({ style: 'classic', photos: [] }); });
-    return () => { alive = false; };
+      .then(data => { clearTimeout(timer); settle(data && data.ok ? data : { style: 'classic', photos: [] }); })
+      .catch(() => { clearTimeout(timer); settle({ style: 'classic', photos: [] }); });
+    return () => { alive = false; clearTimeout(timer); };
   }, []);
 
   const submit = async event => {
@@ -610,6 +615,29 @@ function LoginPage({ onLogin, language, setLanguage }) {
     try { return new URLSearchParams(window.location.search).get('login') === 'classic'; } catch { return false; }
   })();
   const useWaterfall = !forceClassic && media?.style === 'waterfall' && storyPhotos.length >= 3;
+
+  // 接口还没返回：渲染与最终版式同构的骨架（无照片、无动画），接口回来后无缝定稿，
+  // 从视觉上消除「先经典版、再切瀑布流」的闪烁。
+  if (!mediaReady) {
+    return <div className="login-wf login-wf-loading">
+      <div className="login-wf-veil" aria-hidden="true" />
+      <header className="login-wf-head">
+        <img className="login-wf-logo" src="/assets/logo-white.png" alt="TEDxZizhuPark" />
+        <span className="login-wf-lang-skeleton" />
+      </header>
+      <main className="login-wf-main">
+        <div className="login-wf-copy">
+          <h1 className="login-wf-skeleton-h1">Ideas change<br />everything<span>.</span></h1>
+        </div>
+        <div className="login-wf-card">
+          <div className="login-wf-skeleton-form">
+            <i /><i /><i /><i />
+          </div>
+        </div>
+      </main>
+      <footer className="login-wf-foot"><span>2026 · TEDxZizhuPark · Team Hub</span><span>Ideas worth spreading</span></footer>
+    </div>;
+  }
 
   if (useWaterfall) {
     const ratios = ['4 / 5', '1 / 1', '3 / 4', '4 / 3', '5 / 4'];
