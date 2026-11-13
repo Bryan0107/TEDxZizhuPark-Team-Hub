@@ -756,7 +756,12 @@ export default function App() {
 }
 
 function MainApp({ session, onLogout, onSessionUpdate, language, setLanguage }) {
-  const [activePage, setActivePage] = useState(() => pageFromPath(window.location.pathname) || 'dashboard');
+  const [activePage, setActivePage] = useState(() => {
+    // 兼容旧书签（/my-points 等）首次打开直接落到对应视图；之后不再改写 URL。
+    const fromPath = pageFromPath(window.location.pathname);
+    if (fromPath) return fromPath;
+    try { return window.localStorage.getItem('tedx-hub-last-page') || 'dashboard'; } catch { return 'dashboard'; }
+  });
   const [activeYear, setActiveYear] = usePersistentState('tedx-hub-v2-year', 2026);
   const [sidebarOpen, setSidebarOpen] = useState(false);
   const [tasks, setTasks] = useCloudState('tedx-hub-v2-tasks', 'tasks', initialTasks);
@@ -793,12 +798,10 @@ function MainApp({ session, onLogout, onSessionUpdate, language, setLanguage }) 
   // 普通成员/组长看到的是个人工作台，不展示「年度驾驶舱」这个名字。
   const pageMetaForRole = role === 'admin' ? pageMeta : { ...pageMeta, dashboard: [isEn ? 'My desk' : '我的工作台', ''] };
 
-  // 未知路径回落首页；标签页标题跟随页面
+  // 单界面上线后 URL 不再区分页面：记住最后停留的页，下次进来直接回到这里。
   useEffect(() => {
-    if (pageFromPath(window.location.pathname) === null && window.location.pathname !== '/') {
-      window.history.replaceState({}, '', '/');
-    }
-  }, []);
+    try { window.localStorage.setItem('tedx-hub-last-page', activePage); } catch { /* 隐私模式忽略 */ }
+  }, [activePage]);
   useEffect(() => {
     const label = (pageMetaForRole[activePage] || [])[0];
     document.title = label ? `${label} · TEDxZizhuPark Team Hub` : 'TEDxZizhuPark Team Hub';
@@ -924,17 +927,8 @@ function MainApp({ session, onLogout, onSessionUpdate, language, setLanguage }) 
     setActivePage('dashboard');
   }, [role, activePage]);
 
-  // 浏览器前进 / 后退
-  useEffect(() => {
-    const onPop = () => {
-      const page = pageFromPath(window.location.pathname) || 'dashboard';
-      setActivePage(page);
-      setSidebarOpen(false);
-      window.scrollTo(0, 0);
-    };
-    window.addEventListener('popstate', onPop);
-    return () => window.removeEventListener('popstate', onPop);
-  }, []);
+  // 单界面：左侧导航直接切换视图，不改 URL、不产生历史记录。
+  // 浏览器返回键因此只用于关闭抽屉/弹窗（见下方 overlayOpen 处理）。
 
   // 移动端：抽屉或弹窗打开时压入一条同 URL 的历史记录，
   // 让系统返回键 / 侧滑返回先关掉浮层，而不是直接退到上一页。
@@ -955,8 +949,6 @@ function MainApp({ session, onLogout, onSessionUpdate, language, setLanguage }) 
   }, [sidebarOpen, modal]);
 
   const navigate = page => {
-    const path = PAGE_PATHS[page] || '/';
-    if (window.location.pathname !== path) window.history.pushState({ page }, '', path);
     setActivePage(page);
     setSidebarOpen(false); setSearch(''); setSearchFocus(false);
     setLanguageOpen(false); setNotificationsOpen(false); setProfileOpen(false);

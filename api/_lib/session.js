@@ -85,14 +85,31 @@ export function clearSessionCookie(res) {
   appendCookie(res, `${COOKIE_NAME}=; Path=/; HttpOnly; SameSite=Lax; Max-Age=0`);
 }
 
+/**
+ * Cookie 值格式：`<secret>~<签发时间戳秒>`。
+ * 带上时间戳后，服务端可以在短时间内跳过 /account 校验，省掉每次启动 300–500ms 的往返；
+ * 超时或格式不符（老 Cookie）时仍按原逻辑校验。
+ */
 export function readAppwriteSessionSecret(req) {
-  return parseCookies(req)[APPWRITE_COOKIE] || '';
+  const raw = parseCookies(req)[APPWRITE_COOKIE] || '';
+  if (!raw) return '';
+  const [secret] = raw.split('~');
+  return secret || '';
+}
+
+/** 返回 { secret, issuedAt }，issuedAt 为 0 表示未知（老 Cookie）。 */
+export function readAppwriteSessionCookie(req) {
+  const raw = parseCookies(req)[APPWRITE_COOKIE] || '';
+  if (!raw) return { secret: '', issuedAt: 0 };
+  const [secret, ts] = raw.split('~');
+  return { secret: secret || '', issuedAt: Number(ts) || 0 };
 }
 
 export function setAppwriteSessionCookie(res, secret, ttl = APPWRITE_TTL) {
   if (!secret) return;
+  const stamped = `${secret}~${Math.floor(Date.now() / 1000)}`;
   const parts = [
-    `${APPWRITE_COOKIE}=${encodeURIComponent(secret)}`,
+    `${APPWRITE_COOKIE}=${encodeURIComponent(stamped)}`,
     'Path=/',
     'HttpOnly',
     'SameSite=Lax',

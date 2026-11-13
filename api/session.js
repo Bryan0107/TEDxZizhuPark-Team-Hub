@@ -8,7 +8,7 @@
  */
 import {
   readSession, clearSessionCookie,
-  readAppwriteSessionSecret, setAppwriteSessionCookie, clearAppwriteSessionCookie,
+  readAppwriteSessionCookie, setAppwriteSessionCookie, clearAppwriteSessionCookie,
 } from './_lib/session.js';
 import { findOne } from './_lib/store.js';
 import { ensureSessionForMember, appwriteSessionValid, identityReady } from './_lib/appwrite-identity.js';
@@ -29,8 +29,11 @@ export default async function handler(req, res) {
   const [member, validSecret] = await Promise.all([
     findOne('members', '$id', session.sub).catch(() => null),
     (async () => {
-      const secret = readAppwriteSessionSecret(req);
+      const { secret, issuedAt } = readAppwriteSessionCookie(req);
       if (!secret) return '';
+      // 刚签发 30 分钟内直接复用，跳过 /account 往返（启动快 300–500ms）；
+      // 更早的 Cookie 仍校验一次，避免会话被删后前端静默读空。
+      if (issuedAt && Date.now() / 1000 - issuedAt < 1800) return secret;
       return (await appwriteSessionValid(secret)) ? secret : '';
     })(),
   ]);
