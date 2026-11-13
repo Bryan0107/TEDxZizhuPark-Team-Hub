@@ -836,6 +836,17 @@ function MainApp({ session, onLogout, onSessionUpdate, language, setLanguage }) 
     return () => window.removeEventListener('popstate', onPop);
   }, []);
 
+  // 移动端：抽屉或弹窗打开时压入一条同 URL 的历史记录，
+  // 让系统返回键 / 侧滑返回先关掉浮层，而不是直接退到上一页。
+  const overlayOpen = sidebarOpen || Boolean(modal);
+  useEffect(() => {
+    if (!overlayOpen) return;
+    window.history.pushState({ overlay: true });
+    const closeOverlay = () => { setSidebarOpen(false); setModal(null); };
+    window.addEventListener('popstate', closeOverlay);
+    return () => window.removeEventListener('popstate', closeOverlay);
+  }, [overlayOpen]);
+
   // 移动端：抽屉或全屏弹窗打开时锁住页面滚动，避免背景跟着滑动（iOS 尤其明显）。
   useEffect(() => {
     const locked = sidebarOpen || Boolean(modal);
