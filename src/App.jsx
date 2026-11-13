@@ -938,7 +938,7 @@ function MainApp({ session, onLogout, onSessionUpdate, language, setLanguage }) 
   const overlayOpen = sidebarOpen || Boolean(modal);
   useEffect(() => {
     if (!overlayOpen) return;
-    window.history.pushState({ overlay: true });
+    window.history.pushState({ overlay: true }, '');
     const closeOverlay = () => { setSidebarOpen(false); setModal(null); };
     window.addEventListener('popstate', closeOverlay);
     return () => window.removeEventListener('popstate', closeOverlay);
