@@ -367,6 +367,8 @@ function useCloudState(storageKey, table, seed) {
   const [items, setItems] = usePersistentState(storageKey, seed);
   // 只有云端读取成功才允许写回，避免离线时把陈旧本地缓存推回数据库。
   const [syncEnabled, setSyncEnabled] = useState(false);
+  // ready 用于区分「还没读到」和「确实是 0 条」，页面据此显示加载态而不是假空态。
+  const [ready, setReady] = useState(false);
   const booted = useRef(false);
   useEffect(() => {
     let cancelled = false;
@@ -382,9 +384,11 @@ function useCloudState(storageKey, table, seed) {
         if (!cancelled) {
           setItems(remote.length ? remote : seed);
           setSyncEnabled(true);
+          setReady(true);
         }
       } catch (err) {
         console.warn(`[Team Hub] ${table} 云端读取失败，保留本地缓存且不回写`, err);
+        if (!cancelled) setReady(true);
       }
     })();
     return () => { cancelled = true; };
@@ -394,7 +398,7 @@ function useCloudState(storageKey, table, seed) {
     const timer = setTimeout(() => { syncTable(table, items).catch(() => {}); }, 700);
     return () => clearTimeout(timer);
   }, [items, syncEnabled, table]);
-  return [items, setItems];
+  return [items, setItems, ready];
 }
 
 const DAY_PARTS = {
@@ -739,7 +743,14 @@ export default function App() {
   if (window.location.pathname.startsWith('/hall-of-honor')) {
     return <HallOfHonor onExit={() => { window.history.pushState({}, '', '/'); window.location.reload(); }} />;
   }
-  if (session === undefined) return <div className="boot-screen"><img src="/assets/logo-black.png" alt="TEDxZizhuPark" /><span>Loading Team Hub…</span></div>;
+  if (session === undefined) {
+    // 加载屏跟随「接下来会看到什么」：有登录 Cookie 的人看到浅色工作台底，
+    // 未登录的人看到与登录页一致的深色底，避免刷新时闪一下就换色。
+    const likelySignedIn = /(?:^|;\s*)(th_session|th_aws)=/.test(document.cookie);
+    return likelySignedIn
+      ? <div className="boot-screen"><img src="/assets/logo-black.png" alt="TEDxZizhuPark" /><span>Loading Team Hub…</span></div>
+      : <div className="boot-screen boot-screen-dark"><img src="/assets/logo-white.png" alt="TEDxZizhuPark" /><span>Loading Team Hub…</span></div>;
+  }
   if (!session) return <LoginPage onLogin={setSession} language={language} setLanguage={setLanguage} />;
   return <MainApp session={session} onLogout={handleLogout} onSessionUpdate={setSession} language={language} setLanguage={setLanguage} />;
 }
@@ -752,7 +763,7 @@ function MainApp({ session, onLogout, onSessionUpdate, language, setLanguage }) 
   const [reports, setReports] = useCloudState('tedx-hub-v2-reports', 'reports', initialReports);
   const [members, setMembers] = useCloudState('tedx-hub-v2-members', 'members', initialMembers);
   const [teams, setTeams] = useCloudState('tedx-hub-v2-teams', 'teams', initialTeams);
-  const [transactions, setTransactions] = useCloudState('tedx-hub-v2-transactions', 'points_transactions', pointTransactions);
+  const [transactions, setTransactions, transactionsReady] = useCloudState('tedx-hub-v2-transactions', 'points_transactions', pointTransactions);
   const [reserves, setReserves] = useCloudState('tedx-hub-v2-reserves', 'reserve_volunteers', reserveVolunteers);
   const [modal, setModal] = useState(null);
   const [toast, setToast] = useState('');
@@ -1054,7 +1065,7 @@ function MainApp({ session, onLogout, onSessionUpdate, language, setLanguage }) 
     case 'tasks': content = <TasksPage tasks={tasks} setTasks={setTasks} teams={teams} members={activeMembers} creditPoints={creditTaskPoints} {...shared} />; break;
     case 'teams': content = <TeamsPage teams={teamView} members={activeMembers} {...shared} />; break;
     case 'members': content = <MembersPage members={members} setMembers={setMembers} teams={teams} reserves={reserves} setReserves={setReserves} transactions={transactions} tasks={tasks} {...shared} />; break;
-    case 'myPoints': content = <MyPointsPage transactions={transactions} tasks={tasks} teams={teams} {...shared} />; break;
+    case 'myPoints': content = <MyPointsPage transactions={transactions} tasks={tasks} teams={teams} member={myMember} ready={transactionsReady} {...shared} />; break;
     case 'pointsManagement': content = <PointsManagement transactions={transactions} setTransactions={setTransactions} members={activeMembersWithPoints} isAdmin={role === 'admin'} {...shared} />; break;
     case 'analytics': content = <AnalyticsPage teams={teamView} monthlyTrend={monthlyTrend} transactions={transactions} tasks={tasks} members={activeMembers} {...shared} />; break;
     case 'hallAdmin': content = <HallAdmin notify={notify} lang={language} />; break;
@@ -1676,16 +1687,47 @@ function ReserveForm({ teams = [], onClose, onSave, isEn }) {
   </Modal>;
 }
 
-function MyPointsPage({ transactions, tasks, teams, navigate, exportCsv, t, isEn, language }) {
-  const myTx = transactions.slice(0, 5);
-  const totalPoints = transactions.reduce((sum, tx) => sum + (Number(tx.points) || 0), 0);
-  const byType = transactions.reduce((acc, tx) => { acc[tx.type] = (acc[tx.type] || 0) + (Number(tx.points) || 0); return acc; }, {});
+function MyPointsPage({ transactions, tasks, teams, member, navigate, exportCsv, t, isEn, language, ready = true }) {
+  // 「我的积分」只统计当前成员自己的流水；按成员档案归一化匹配（同名旧记录也能命中）。
+  const mine = useMemo(() => {
+    if (!member) return [];
+    const key = squashName(member.name);
+    const alt = squashName(member.english);
+    return transactions.filter(tx => {
+      const n = squashName(tx.member);
+      return n && (n === key || (alt && n === alt));
+    });
+  }, [transactions, member]);
+  const myTx = mine.slice(0, 5);
+  const totalPoints = mine.reduce((sum, tx) => sum + (Number(tx.points) || 0), 0);
+  const byType = mine.reduce((acc, tx) => { acc[tx.type] = (acc[tx.type] || 0) + (Number(tx.points) || 0); return acc; }, {});
+  const myTasks = useMemo(() => {
+    if (!member) return [];
+    const key = squashName(member.name);
+    return tasks.filter(task => {
+      const owner = squashName(task.owner);
+      const collab = Array.isArray(task.collaborators) && task.collaborators.some(c => squashName(c) === key);
+      return owner === key || collab;
+    });
+  }, [tasks, member]);
   const legend = [['任务贡献', 'Task Contribution', '#e62b1e'], ['基础参与', 'Basic Participation', '#f2b84b'], ['组织贡献', 'Organizational Contribution', '#4d6fb3'], ['特别贡献', 'Special Contribution', '#6a9b82']]
     .map(([zh, en, color]) => ({ zh, en, color, value: byType[zh] || 0, percent: totalPoints ? Math.round((byType[zh] || 0) / totalPoints * 100) : 0 }));
+  // 环形图按真实占比绘制；没有积分时给一圈中性灰，避免"有数据"的错觉。
+  const donutBg = totalPoints
+    ? (() => {
+      let cursor = 0;
+      const stops = legend.filter(item => item.value > 0).map(item => {
+        const from = cursor;
+        cursor += (item.value / totalPoints) * 100;
+        return `${item.color} ${from}% ${cursor}%`;
+      });
+      return cursor < 100 ? `conic-gradient(${stops.join(',')} , #ececE7 ${cursor}% 100%)` : `conic-gradient(${stops.join(',')})`;
+    })()
+    : 'conic-gradient(#ecece7 0 100%)';
   return <div className="page"><PageTitle title={t('myPointsTitle')} subtitle={t('myPointsSubtitle')} actions={<Button variant="secondary" icon={Download} onClick={() => exportCsv(isEn ? 'Personal Point Transactions' : '个人积分流水')}>{t('exportContribution')}</Button>} />
-    <section className="points-hero"><div className="points-hero-main"><img className="points-hero-logo" src="/assets/logo-white.png" alt="TEDxZizhuPark" /><span>{isEn ? '2026 Annual Points' : '2026 年度累计积分'}</span><div><strong>{totalPoints}</strong><small>{isEn ? 'pts' : '分'}</small></div><p><span><ArrowUpRight size={14} />{isEn ? `${totalPoints} pts recorded` : `已记录 ${totalPoints} 分`}</span>{isEn ? 'Points are a record, not a ranking' : '积分是记录，不是排名'}</p></div><div className="points-hero-stats"><div><span>{isEn ? 'Lifetime Points' : '历史累计积分'}</span><strong>{totalPoints}<small>{isEn ? ' pts' : ' 分'}</small></strong></div><div><span>{isEn ? 'Annual Rank' : '年度组织排名'}</span><strong>—<small></small></strong></div><div><span>{isEn ? 'Consecutive Participation' : '连续参与'}</span><strong>—<small></small></strong></div></div></section>
-    <div className="points-content-grid"><div className="card points-breakdown"><div className="card-header"><div><h2>{t('pointsStructure')}</h2><p>{t('pointsStructureSub')}</p></div></div><div className="points-donut-row"><div className="points-donut"><div><strong>{totalPoints}</strong><span>{isEn ? 'Total Points' : '总积分'}</span></div></div><div className="points-legend">{legend.map(item => <div key={item.zh}><i style={{ background: item.color }} /><span>{isEn ? item.en : item.zh}</span><strong>{item.value} {isEn ? 'pts' : '分'}</strong><small>{item.percent}%</small></div>)}</div></div><div className="points-quote"><Sparkles size={18} /><p>{isEn ? 'Points record your contribution, not your total value.' : '积分是组织对你付出的记录，而不是对你价值的唯一评价。'}</p></div></div><div className="card contribution-card"><div className="card-header"><div><h2>{t('myAnnualContribution')}</h2><p>{t('myAnnualContributionSub')}</p></div></div><div className="contribution-grid"><div><CheckSquare size={18} /><strong>{tasks.length}</strong><span>{t('completedTasks')}</span></div><div><CalendarDays size={18} /><strong>{transactions.length}</strong><span>{t('attendedActivities')}</span></div><div><UsersRound size={18} /><strong>{new Set(transactions.map(tx => tx.team).filter(Boolean)).size}</strong><span>{t('crossTeamCollaboration')}</span></div><div><Star size={18} /><strong>{byType['特别贡献'] || 0}</strong><span>{t('specialContributions')}</span></div></div><button className="full-secondary-button" onClick={() => navigate('analytics')}>{t('viewContributionReport')}<ArrowUpRight size={15} /></button></div></div>
-    <div className="card table-card"><div className="card-header padded"><div><h2>{t('pointsDetails')}</h2><p>{t('pointsDetailsSub')}</p></div><span className="static-year">{t('year2026')}</span></div><div className="table-wrap"><table className="data-table"><thead><tr><th>{t('pointsSource')}</th><th>{t('pointsType')}</th><th>{t('assignedTeam')}</th><th>{t('time')}</th><th>{t('reviewStatus')}</th><th>{t('points')}</th></tr></thead><tbody>{myTx.map(tx => <tr key={tx.id}><td><strong>{tx.source}</strong><small className="transaction-id">{tx.id}</small></td><td><StatusBadge>{tx.type}</StatusBadge></td><td>{tx.team}</td><td className="muted">{tx.date}</td><td><StatusBadge>{tx.status}</StatusBadge></td><td><strong className={tx.points >= 0 ? 'positive-points' : 'negative-points'}>{tx.points > 0 ? '+' : ''}{tx.points}</strong></td></tr>)}</tbody></table></div></div>
+    <section className="points-hero"><div className="points-hero-main"><img className="points-hero-logo" src="/assets/logo-white.png" alt="TEDxZizhuPark" /><span>{isEn ? '2026 Annual Points' : '2026 年度累计积分'}</span><div><strong>{ready ? totalPoints : '—'}</strong><small>{isEn ? 'pts' : '分'}</small></div><p><span><ArrowUpRight size={14} />{ready ? (isEn ? `${totalPoints} pts recorded` : `已记录 ${totalPoints} 分`) : (isEn ? 'Loading your records…' : '正在读取你的记录…')}</span>{isEn ? 'Points are a record, not a ranking' : '积分是记录，不是排名'}</p></div><div className="points-hero-stats"><div><span>{isEn ? 'Lifetime Points' : '历史累计积分'}</span><strong>{ready ? totalPoints : '—'}<small>{isEn ? ' pts' : ' 分'}</small></strong></div><div><span>{isEn ? 'Annual Rank' : '年度组织排名'}</span><strong>—<small></small></strong></div><div><span>{isEn ? 'Consecutive Participation' : '连续参与'}</span><strong>—<small></small></strong></div></div></section>
+    <div className="points-content-grid"><div className="card points-breakdown"><div className="card-header"><div><h2>{t('pointsStructure')}</h2><p>{t('pointsStructureSub')}</p></div></div><div className="points-donut-row"><div className="points-donut" style={{ background: donutBg }}><div><strong>{ready ? totalPoints : '—'}</strong><span>{isEn ? 'Total Points' : '总积分'}</span></div></div><div className="points-legend">{legend.map(item => <div key={item.zh}><i style={{ background: item.color }} /><span>{isEn ? item.en : item.zh}</span><strong>{item.value} {isEn ? 'pts' : '分'}</strong><small>{item.percent}%</small></div>)}</div></div><div className="points-quote"><Sparkles size={18} /><p>{!ready ? (isEn ? 'Loading…' : '正在读取…') : totalPoints ? (isEn ? 'Points record your contribution, not your total value.' : '积分是组织对你付出的记录，而不是对你价值的唯一评价。') : (isEn ? 'No points recorded yet — they appear here once a report or task is reviewed.' : '还没有积分记录。任务完成或月报审核通过后，积分会自动记到这里。')}</p></div></div><div className="card contribution-card"><div className="card-header"><div><h2>{t('myAnnualContribution')}</h2><p>{t('myAnnualContributionSub')}</p></div></div><div className="contribution-grid"><div><CheckSquare size={18} /><strong>{myTasks.length}</strong><span>{t('completedTasks')}</span></div><div><CalendarDays size={18} /><strong>{mine.length}</strong><span>{t('attendedActivities')}</span></div><div><UsersRound size={18} /><strong>{new Set(mine.map(tx => tx.team).filter(Boolean)).size}</strong><span>{t('crossTeamCollaboration')}</span></div><div><Star size={18} /><strong>{byType['特别贡献'] || 0}</strong><span>{t('specialContributions')}</span></div></div><button className="full-secondary-button" onClick={() => navigate('analytics')}>{t('viewContributionReport')}<ArrowUpRight size={15} /></button></div></div>
+    <div className="card table-card"><div className="card-header padded"><div><h2>{t('pointsDetails')}</h2><p>{t('pointsDetailsSub')}</p></div><span className="static-year">{t('year2026')}</span></div><div className="table-wrap"><table className="data-table"><thead><tr><th>{t('pointsSource')}</th><th>{t('pointsType')}</th><th>{t('assignedTeam')}</th><th>{t('time')}</th><th>{t('reviewStatus')}</th><th>{t('points')}</th></tr></thead><tbody>{myTx.map(tx => <tr key={tx.id}><td><strong>{tx.source}</strong><small className="transaction-id">{tx.id}</small></td><td><StatusBadge>{tx.type}</StatusBadge></td><td>{tx.team}</td><td className="muted">{tx.date}</td><td><StatusBadge>{tx.status}</StatusBadge></td><td><strong className={tx.points >= 0 ? 'positive-points' : 'negative-points'}>{tx.points > 0 ? '+' : ''}{tx.points}</strong></td></tr>)}</tbody></table>{ready && !mine.length && <EmptyState icon={Coins} title={isEn ? 'No points yet' : '还没有积分记录'} description={isEn ? 'Points appear here after your task or monthly report is reviewed.' : '完成任务或月报审核通过后，积分流水会显示在这里。'} />}{!ready && <div className="mp-loading">{isEn ? 'Loading your point records…' : '正在读取你的积分记录…'}</div>}</div></div>
   </div>;
 }
 
