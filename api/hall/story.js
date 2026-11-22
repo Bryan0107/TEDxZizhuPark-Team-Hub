@@ -26,7 +26,28 @@ const rateLimited = ip => {
   return list.length > LIMIT;
 };
 
+// 公开成员名录：只返回纪念馆需要的字段，绝不带 email / feishu_open_id 等内部信息。
+const PUBLIC_MEMBER_FIELDS = ['name', 'english', 'team', 'role', 'joined', 'first_join_year', 'introduction', 'authorization_status'];
+
 export default async function handler(req, res) {
+  if (req.method === 'GET') {
+    if (req.query?.resource !== 'members') return res.status(400).json({ ok: false, error: 'unknown resource' });
+    try {
+      const rows = await listAll('members');
+      const members = rows
+        .filter(row => row.public_visibility === 'public')
+        .map(row => {
+          const out = { id: row.$id };
+          PUBLIC_MEMBER_FIELDS.forEach(key => { if (row[key] !== undefined && row[key] !== null) out[key] = row[key]; });
+          return out;
+        });
+      res.setHeader('Cache-Control', 'public, s-maxage=300, stale-while-revalidate=600');
+      return res.status(200).json({ ok: true, members });
+    } catch (err) {
+      return res.status(500).json({ ok: false, error: String(err.message || err).slice(0, 160) });
+    }
+  }
+
   if (req.method !== 'POST') return res.status(405).json({ ok: false, error: 'method not allowed' });
 
   const ip = String(req.headers['x-forwarded-for'] || req.socket?.remoteAddress || '').split(',')[0].trim();

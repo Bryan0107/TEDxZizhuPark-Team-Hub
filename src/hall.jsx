@@ -35,8 +35,13 @@ function useHallData() {
     let alive = true;
     (async () => {
       try {
+        // 成员走服务端公开接口：members 表已收紧为登录可见，公开页只拿白名单字段。
+        const publicMembersPromise = fetch('/api/hall/story?resource=members')
+          .then(r => r.json())
+          .then(d => (d.ok ? d.members : []))
+          .catch(() => []);
         const [terms, memberTerms, members, teams, sources, assets, stories] = await Promise.all([
-          fetchTable('terms'), fetchTable('member_terms'), fetchTable('members'), fetchTable('term_teams'),
+          fetchTable('terms'), fetchTable('member_terms'), publicMembersPromise, fetchTable('term_teams'),
           fetchTable('historical_sources'), fetchTable('legacy_assets'), fetchTable('member_stories'),
         ]);
         if (!alive) return;

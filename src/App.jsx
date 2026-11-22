@@ -387,14 +387,23 @@ function usePersistentState(key, initialValue) {
   return [value, setValue];
 }
 
+/** 稳定的行签名：键排序后序列化，避免云端与本地字段顺序不同导致误判为「有变化」。 */
+function rowSignature(row) {
+  if (!row || typeof row !== 'object') return '';
+  const keys = Object.keys(row).filter(k => !k.startsWith('$')).sort();
+  return JSON.stringify(keys.map(k => [k, row[k]]));
+}
+
 function useCloudState(storageKey, table, seed) {
   const [items, setItems] = usePersistentState(storageKey, seed);
+  // 记住「云端已有的行快照」，只把真正变化的行写回去。
+  // 之前每次加载都会把整表（174 个成员）逐行 upsert，一次打开页面 200+ 请求，直接触发 Appwrite 429。
+  const synced = useRef(new Map());
   // 只有云端读取成功才允许写回，避免离线时把陈旧本地缓存推回数据库。
   const [syncEnabled, setSyncEnabled] = useState(false);
   // ready 用于区分「还没读到」和「确实是 0 条」，页面据此显示加载态而不是假空态。
   const [ready, setReady] = useState(false);
   const [reloadKey, setReloadKey] = useState(0);
-  const booted = useRef(false);
   // 供页面在回到前台 / 手动刷新时重新拉取，避免长期显示本地旧缓存。
   const reload = useCallback(() => setReloadKey(k => k + 1), []);
   useEffect(() => {
@@ -420,7 +429,9 @@ function useCloudState(storageKey, table, seed) {
           remote = await fetchTable(table);
         }
         if (!cancelled) {
-          setItems(remote.length ? remote : seed);
+          const next = remote.length ? remote : seed;
+          synced.current = new Map(next.map(row => [String(row.id), rowSignature(row)]));
+          setItems(next);
           setSyncEnabled(true);
           setReady(true);
         }
@@ -432,8 +443,15 @@ function useCloudState(storageKey, table, seed) {
     return () => { cancelled = true; };
   }, [table, reloadKey]);
   useEffect(() => {
-    if (!syncEnabled || !booted.current) { booted.current = true; return; }
-    const timer = setTimeout(() => { syncTable(table, items).catch(() => {}); }, 700);
+    if (!syncEnabled) return;
+    // 只挑出与云端快照不同的行，单次编辑通常只有 1 行需要写。
+    const changed = (items || []).filter(row => synced.current.get(String(row.id)) !== rowSignature(row));
+    if (!changed.length) return;
+    const timer = setTimeout(() => {
+      syncTable(table, changed)
+        .then(ok => { if (ok) changed.forEach(row => synced.current.set(String(row.id), rowSignature(row))); })
+        .catch(() => {});
+    }, 700);
     return () => clearTimeout(timer);
   }, [items, syncEnabled, table]);
   return [items, setItems, ready, reload];
@@ -800,10 +818,15 @@ export default function App() {
 
 function MainApp({ session, onLogout, onSessionUpdate, language, setLanguage }) {
   const [activePage, setActivePage] = useState(() => {
-    // 兼容旧书签（/my-points 等）首次打开直接落到对应视图；之后不再改写 URL。
+    // 兼容旧书签（/my-points 等）首次打开直接落到对应视图。
     const fromPath = pageFromPath(window.location.pathname);
     if (fromPath) return fromPath;
-    try { return window.localStorage.getItem('tedx-hub-last-page') || 'dashboard'; } catch { return 'dashboard'; }
+    const fallback = (() => { try { return window.localStorage.getItem('tedx-hub-last-page') || 'dashboard'; } catch { return 'dashboard'; } })();
+    // 未知路径（例如手写错的 /points-management）纠正到真实地址，避免「地址是一个页面、内容是另一个页面」。
+    if (window.location.pathname !== '/') {
+      try { window.history.replaceState({}, '', PAGE_PATHS[fallback] || '/'); } catch { /* ignore */ }
+    }
+    return fallback;
   });
   const [activeYear, setActiveYear] = usePersistentState('tedx-hub-v2-year', 2026);
   const [sidebarOpen, setSidebarOpen] = useState(false);

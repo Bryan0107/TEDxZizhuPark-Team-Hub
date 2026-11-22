@@ -82,7 +82,9 @@ export function setSessionCookie(res, token, ttl = DEFAULT_TTL) {
 }
 
 export function clearSessionCookie(res) {
-  appendCookie(res, `${COOKIE_NAME}=; Path=/; HttpOnly; SameSite=Lax; Max-Age=0`);
+  const parts = [`${COOKIE_NAME}=`, 'Path=/', 'HttpOnly', 'SameSite=Lax', 'Max-Age=0'];
+  if (process.env.VERCEL_ENV === 'production') parts.push('Secure');
+  appendCookie(res, parts.join('; '));
 }
 
 /**
@@ -120,7 +122,9 @@ export function setAppwriteSessionCookie(res, secret, ttl = APPWRITE_TTL) {
 }
 
 export function clearAppwriteSessionCookie(res) {
-  appendCookie(res, `${APPWRITE_COOKIE}=; Path=/; HttpOnly; SameSite=Lax; Max-Age=0`);
+  const parts = [`${APPWRITE_COOKIE}=`, 'Path=/', 'HttpOnly', 'SameSite=Lax', 'Max-Age=0'];
+  if (process.env.VERCEL_ENV === 'production') parts.push('Secure');
+  appendCookie(res, parts.join('; '));
 }
 
 /** 需要登录的接口统一守卫。 */

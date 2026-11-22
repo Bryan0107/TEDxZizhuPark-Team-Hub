@@ -88,8 +88,18 @@ export default async function handler(req, res) {
 
   // 站内通知配套的飞书单聊（发给本人，不是群）
   if (req.body?.action === 'dm') {
-    const { member, title, summary, fields } = req.body || {};
-    const result = await notifyMemberDm({ member, title, summary, fields });
+    const { member = '', title = '', summary = '', fields = [] } = req.body || {};
+    // 入参校验：这些字段会写进飞书卡片和数据库，超长或类型不对直接拒绝。
+    if (typeof member !== 'string' || typeof title !== 'string' || typeof summary !== 'string') {
+      return res.status(400).json({ ok: false, error: 'BAD_INPUT', message: 'member/title/summary 必须是字符串' });
+    }
+    if (!member.trim() || member.length > 64 || !title.trim() || title.length > 160 || summary.length > 900) {
+      return res.status(400).json({ ok: false, error: 'BAD_INPUT', message: 'member ≤64、title ≤160、summary ≤900，且不能为空' });
+    }
+    if (!Array.isArray(fields) || fields.length > 12) {
+      return res.status(400).json({ ok: false, error: 'BAD_INPUT', message: 'fields 最多 12 组' });
+    }
+    const result = await notifyMemberDm({ member: member.trim(), title: title.trim(), summary, fields });
     return res.status(200).json({ ok: true, ...result });
   }
 

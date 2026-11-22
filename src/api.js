@@ -128,8 +128,9 @@ async function upsertItem(table, item) {
   const candidate = valid ? String(item.id) : '';
   const rowId = /^[a-zA-Z0-9][a-zA-Z0-9._-]{0,35}$/.test(candidate) ? candidate : ID.unique();
   const data = encodeRow(table, item, rowId);
-  // 显式赋予表级权限，避免不同登录账号创建的行只对创建者可见/可改。
-  const permissions = ['read("any")', 'update("any")', 'delete("any")'];
+  // 显式赋予行级权限，避免不同登录账号创建的行只对创建者可见/可改。
+  // 注意：必须是 users，不能是 any —— any 等于把匿名访问者也算进来（曾导致成员表匿名可读）。
+  const permissions = ['read("users")', 'update("users")', 'delete("users")'];
   try {
     await tables.upsertRow({ databaseId: DB, tableId: table, rowId, data, permissions });
   } catch (err) {
