@@ -30,7 +30,6 @@ const ROUTES = {
   '/api/hall/story': 'api/hall/story.js',
   '/api/hall/media': 'api/hall/media.js',
   '/api/cron/feishu-sync': 'api/cron/feishu-sync.js',
-  '/api/meeting/create': 'api/meeting/create.js',
 };
 
 const readBody = req => new Promise(resolve => {

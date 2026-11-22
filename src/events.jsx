@@ -69,7 +69,7 @@ export function EventsPage({ events, setEvents, signups, setSignups, members = [
   useEffect(() => {
     if (!creating) return;
     let alive = true;
-    fetch('/api/meeting/create').then(r => r.json()).then(d => { if (alive) setAutoMeeting({ apiReady: !!d.apiReady, checked: true }); })
+    fetch('/api/notify', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ meeting: 'status' }) }).then(r => r.json()).then(d => { if (alive) setAutoMeeting({ apiReady: !!d.apiReady, checked: true }); })
       .catch(() => { if (alive) setAutoMeeting({ apiReady: false, checked: true }); });
     return () => { alive = false; };
   }, [creating]);
@@ -81,10 +81,10 @@ export function EventsPage({ events, setEvents, signups, setSignups, members = [
     let meetingPatch = {};
     if (form.meeting_provider === '腾讯会议' && !String(form.meeting_url || '').trim()) {
       try {
-        const res = await fetch('/api/meeting/create', {
+        const res = await fetch('/api/notify', {
           method: 'POST', headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({
-            subject: form.title.trim(), date: form.event_date || todayISO(),
+            action: 'meeting-create', subject: form.title.trim(), date: form.event_date || todayISO(),
             startTime: form.event_time || '09:00', durationMin: Number(form.duration_min) || 60,
           }),
         });
@@ -198,9 +198,9 @@ export function EventsPage({ events, setEvents, signups, setSignups, members = [
     try {
       // 先取消腾讯会议，避免留下孤儿会议；失败不阻断删除。
       if (event.meeting_provider === '腾讯会议' && (event.meeting_code || '')) {
-        const res = await fetch('/api/meeting/create', {
-          method: 'DELETE', headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ meetingCode: event.meeting_code }),
+        const res = await fetch('/api/notify', {
+          method: 'POST', headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ action: 'meeting-cancel', meetingCode: event.meeting_code }),
         }).catch(() => null);
         const data = res ? await res.json().catch(() => ({})) : {};
         if (!data.ok) notify(L(isEn, `活动已删除，但腾讯会议取消失败：${data.error || '未知原因'}`, 'Event deleted, meeting cancel failed'));
