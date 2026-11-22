@@ -6,13 +6,19 @@
 import React, { useEffect, useMemo, useState } from 'react';
 import {
   CalendarDays, MapPin, Users, Plus, X, QrCode, Check, Download, Clock3,
-  Sparkles, CircleCheck, UserPlus, ArrowLeft,
+  Sparkles, CircleCheck, UserPlus, ArrowLeft, CalendarPlus, Video,
 } from 'lucide-react';
 import { fetchTable, saveRow, removeRow } from './api';
+import { buildIcs, downloadIcs, expandOccurrences, RECURRENCE_LABELS, RECURRENCE_LABELS_EN } from './ics';
 import { computeRulePoints } from './rules';
 
 const L = (isEn, zh, en) => (isEn ? en : zh);
 const todayISO = () => new Date().toISOString().slice(0, 10);
+const EMPTY_FORM = {
+  title: '', event_date: '', event_time: '14:00', location: '', capacity: 0, description: '',
+  duration_min: 90, recurrence: 'none', recurrence_end: '',
+  meeting_provider: '线下', meeting_url: '', meeting_code: '', meeting_password: '', timezone: 'Asia/Shanghai',
+};
 const rid = prefix => `${prefix}_${Date.now().toString(36)}${Math.random().toString(36).slice(2, 5)}`;
 
 function Sheet({ title, subtitle, onClose, children, footer, size = 'md' }) {
@@ -53,7 +59,7 @@ export function EventsPage({ events, setEvents, signups, setSignups, members = [
   const [creating, setCreating] = useState(false);
   const [detail, setDetail] = useState(null);
   const [qrFor, setQrFor] = useState(null);
-  const [form, setForm] = useState({ title: '', event_date: '', event_time: '', location: '', capacity: 0, description: '' });
+  const [form, setForm] = useState(EMPTY_FORM);
   const [busy, setBusy] = useState(false);
 
   const signupsOf = id => signups.filter(s => s.event_id === id && s.status !== '已取消');
@@ -62,22 +68,37 @@ export function EventsPage({ events, setEvents, signups, setSignups, members = [
   const createEvent = async () => {
     if (!form.title.trim()) { notify(L(isEn, '请填写活动名称', 'Event title is required')); return; }
     setBusy(true);
-    const row = {
+    // 按重复规则展开成具体场次，每场独立报名/签到；series_id 关联整组。
+    const dates = expandOccurrences({ date: form.event_date, recurrence: form.recurrence, endDate: form.recurrence_end });
+    const seriesId = dates.length > 1 ? rid('series') : '';
+    const base = {
       ...form,
       title: form.title.trim(),
       capacity: Number(form.capacity) || 0,
+      duration_min: Number(form.duration_min) || 60,
       status: '报名中',
       created_by: session?.name || '',
       created_at: todayISO(),
-      id: rid('event'),
     };
+    const rows = (dates.length ? dates : [form.event_date || todayISO()]).map((date, index) => ({
+      ...base,
+      id: rid('event'),
+      event_date: date,
+      series_id: seriesId,
+      occurrence_index: index,
+    }));
+    const row = rows[0];
     try {
-      await saveRow('events', row);
-      setEvents(prev => [{ ...row }, ...prev]);
-      logAudit?.('创建活动', row.title, `${row.event_date || ''} ${row.location || ''}`.trim());
-      notify(L(isEn, `活动「${row.title}」已创建`, `Event "${row.title}" created`));
+      const results = await Promise.allSettled(rows.map(item => saveRow('events', item)));
+      const failed = results.filter(r => r.status === 'rejected').length;
+      if (failed === rows.length) throw new Error('all failed');
+      setEvents(prev => [...rows, ...prev]);
+      logAudit?.('创建活动', row.title, `${rows.length} 场 · ${row.event_date || ''}${seriesId ? ` · ${RECURRENCE_LABELS[form.recurrence]}` : ''}`);
+      notify(L(isEn,
+        rows.length > 1 ? `已创建「${row.title}」，共 ${rows.length} 场${failed ? `（${failed} 场失败）` : ''}` : `活动「${row.title}」已创建`,
+        rows.length > 1 ? `Created "${row.title}" with ${rows.length} sessions` : `Event "${row.title}" created`));
       setCreating(false);
-      setForm({ title: '', event_date: '', event_time: '', location: '', capacity: 0, description: '' });
+      setForm(EMPTY_FORM);
     } catch (err) {
       notify(L(isEn, '创建失败，请重试', 'Failed to create event'));
       console.warn(err);
@@ -133,6 +154,19 @@ export function EventsPage({ events, setEvents, signups, setSignups, members = [
     return { active, signed, checked };
   }, [events, signups]);
 
+  const seriesInfo = event => {
+    if (!event.series_id) return null;
+    const siblings = events.filter(e => e.series_id === event.series_id).sort((a, b) => String(a.event_date).localeCompare(String(b.event_date)));
+    const index = siblings.findIndex(e => e.id === event.id);
+    return { total: siblings.length, index: index >= 0 ? index + 1 : 1, dates: siblings.map(e => e.event_date) };
+  };
+  const exportIcs = event => {
+    const info = seriesInfo(event);
+    const content = buildIcs(event, { repeatCount: info?.total || 1 });
+    const ok = downloadIcs(`${event.title || '活动'}-${event.event_date || ''}.ics`, content);
+    notify(ok ? L(isEn, '日历文件已生成，可导入系统日历', 'Calendar file generated') : L(isEn, '缺少日期，无法生成日历', 'Missing date'));
+  };
+
   const checkinUrl = event => `${window.location.origin}/checkin/${event.id}`;
   const qrSrc = useQr(qrFor ? checkinUrl(qrFor) : '');
 
@@ -158,7 +192,11 @@ export function EventsPage({ events, setEvents, signups, setSignups, members = [
           <div className="event-card-head">
             <StatusPill status={event.status} isEn={isEn} />
             <h3>{event.title}</h3>
-            <p><Clock3 size={13} />{event.event_time || '—'}<MapPin size={13} />{event.location || '—'}</p>
+            <p><Clock3 size={13} />{event.event_time || '—'}{event.duration_min ? ` · ${event.duration_min}min` : ''}<MapPin size={13} />{event.location || '—'}</p>
+            <p className="event-tags">
+              {event.meeting_provider && event.meeting_provider !== '线下' && <span className="event-tag"><Video size={12} />{event.meeting_provider}{event.meeting_code ? ` · ${event.meeting_code}` : ''}</span>}
+              {event.recurrence && event.recurrence !== 'none' && <span className="event-tag">{RECURRENCE_LABELS[event.recurrence]}{seriesInfo(event) ? ` · 第 ${seriesInfo(event).index}/${seriesInfo(event).total} 场` : ''}</span>}
+            </p>
           </div>
         </div>
         {event.description && <p className="event-desc">{event.description}</p>}
@@ -168,6 +206,7 @@ export function EventsPage({ events, setEvents, signups, setSignups, members = [
             {mine ? <button className="button button-ghost" onClick={() => cancelSignup(event)}>{L(isEn, '已报名 · 取消', 'Signed up · cancel')}</button>
               : <button className="button button-secondary" onClick={() => signUp(event)}>{L(isEn, '报名', 'Sign up')}</button>}
             <button className="button button-ghost" onClick={() => setDetail(event)}>{L(isEn, '详情', 'Details')}</button>
+            <button className="icon-button" title={L(isEn, '加入日历 (.ics)', 'Add to calendar (.ics)')} onClick={() => exportIcs(event)}><CalendarPlus size={16} /></button>
             {canManage && <button className="icon-button" title={L(isEn, '签到二维码', 'Check-in QR')} onClick={() => setQrFor(event)}><QrCode size={17} /></button>}
           </div>
         </div>
@@ -181,18 +220,46 @@ export function EventsPage({ events, setEvents, signups, setSignups, members = [
         <label className="field"><span>{L(isEn, '日期', 'Date')}</span><input type="date" value={form.event_date} onChange={e => setForm(f => ({ ...f, event_date: e.target.value }))} /></label>
         <label className="field"><span>{L(isEn, '时间', 'Time')}</span><input value={form.event_time} onChange={e => setForm(f => ({ ...f, event_time: e.target.value }))} placeholder="14:00–17:30" /></label>
         <label className="field"><span>{L(isEn, '地点', 'Venue')}</span><input value={form.location} onChange={e => setForm(f => ({ ...f, location: e.target.value }))} placeholder="紫竹园区 · 报告厅" /></label>
+        <label className="field"><span>{L(isEn, '时长（分钟）', 'Duration (min)')}</span>
+          <select value={form.duration_min} onChange={e => setForm(f => ({ ...f, duration_min: Number(e.target.value) }))}>
+            {[30, 45, 60, 90, 120, 180, 240, 480].map(v => <option key={v} value={v}>{v} {L(isEn, '分钟', 'min')}</option>)}
+          </select>
+        </label>
         <label className="field"><span>{L(isEn, '名额（0 = 不限）', 'Capacity (0 = unlimited)')}</span><input type="number" min="0" value={form.capacity} onChange={e => setForm(f => ({ ...f, capacity: e.target.value }))} /></label>
+        <label className="field"><span>{L(isEn, '重复', 'Repeat')}</span>
+          <select value={form.recurrence} onChange={e => setForm(f => ({ ...f, recurrence: e.target.value }))}>
+            {Object.entries(RECURRENCE_LABELS).map(([v, label]) => <option key={v} value={v}>{isEn ? RECURRENCE_LABELS_EN[v] : label}</option>)}
+          </select>
+        </label>
+        <label className="field"><span>{L(isEn, '重复结束日期', 'Repeat until')}</span>
+          <input type="date" value={form.recurrence_end} disabled={form.recurrence === 'none'} onChange={e => setForm(f => ({ ...f, recurrence_end: e.target.value }))} />
+        </label>
+        <label className="field"><span>{L(isEn, '会议方式', 'Meeting')}</span>
+          <select value={form.meeting_provider} onChange={e => setForm(f => ({ ...f, meeting_provider: e.target.value }))}>
+            {['线下', '腾讯会议', '飞书会议', '其他线上'].map(v => <option key={v} value={v}>{v}</option>)}
+          </select>
+        </label>
+        <label className="field"><span>{L(isEn, '会议号', 'Meeting ID')}</span><input value={form.meeting_code} disabled={form.meeting_provider === '线下'} onChange={e => setForm(f => ({ ...f, meeting_code: e.target.value }))} placeholder="123 456 789" /></label>
+        <label className="field field-full"><span>{L(isEn, '会议链接', 'Meeting link')}</span><input value={form.meeting_url} disabled={form.meeting_provider === '线下'} onChange={e => setForm(f => ({ ...f, meeting_url: e.target.value }))} placeholder={form.meeting_provider === '腾讯会议' ? 'https://meeting.tencent.com/dm/...' : 'https://vc.feishu.cn/j/...'} /></label>
+        <label className="field"><span>{L(isEn, '入会密码', 'Passcode')}</span><input value={form.meeting_password} disabled={form.meeting_provider === '线下'} onChange={e => setForm(f => ({ ...f, meeting_password: e.target.value }))} /></label>
+        <label className="field"><span>{L(isEn, '时区', 'Time zone')}</span><input value="(GMT+08:00) 中国标准时间 · Asia/Shanghai" readOnly disabled /></label>
         <label className="field field-full"><span>{L(isEn, '说明', 'Description')}</span><textarea rows="3" value={form.description} onChange={e => setForm(f => ({ ...f, description: e.target.value }))} /></label>
       </div>
     </Sheet>}
 
     {detail && <Sheet title={detail.title} subtitle={`${detail.event_date || ''} ${detail.event_time || ''} · ${detail.location || ''}`} onClose={() => setDetail(null)} size="lg"
-      footer={<><button className="button button-ghost" onClick={() => exportList(detail)}><Download size={15} />{L(isEn, '导出名单', 'Export list')}</button>{canManage && <button className="button button-secondary" onClick={() => { setQrFor(detail); setDetail(null); }}><QrCode size={15} />{L(isEn, '签到二维码', 'Check-in QR')}</button>}<button className="button button-primary" onClick={() => setDetail(null)}>{L(isEn, '关闭', 'Close')}</button></>}>
+      footer={<><button className="button button-ghost" onClick={() => exportList(detail)}><Download size={15} />{L(isEn, '导出名单', 'Export list')}</button><button className="button button-ghost" onClick={() => exportIcs(detail)}><CalendarPlus size={15} />{detail.series_id ? L(isEn, '整个系列加入日历', 'Whole series (.ics)') : L(isEn, '加入日历', 'Add to calendar')}</button>{canManage && <button className="button button-secondary" onClick={() => { setQrFor(detail); setDetail(null); }}><QrCode size={15} />{L(isEn, '签到二维码', 'Check-in QR')}</button>}<button className="button button-primary" onClick={() => setDetail(null)}>{L(isEn, '关闭', 'Close')}</button></>}>
       {detail.description && <p className="event-detail-desc">{detail.description}</p>}
-      <div className="table-wrap"><table className="data-table"><thead><tr><th>{L(isEn, '成员', 'Member')}</th><th>{L(isEn, '状态', 'Status')}</th><th>{L(isEn, '报名时间', 'Signed up')}</th><th>{L(isEn, '签到时间', 'Checked in')}</th></tr></thead>
-        <tbody>{signupsOf(detail.id).map(s => <tr key={s.id}><td><strong>{s.member_name}</strong></td><td><StatusPill status={s.status} isEn={isEn} /></td><td className="muted">{s.created_at || '—'}</td><td className="muted">{s.checked_in_at || '—'}</td></tr>)}</tbody></table>
-        {!signupsOf(detail.id).length && <p className="muted event-empty-line">{L(isEn, '还没有人报名', 'No sign-ups yet')}</p>}
+      <div className="event-detail-meta">
+        <div><span>{L(isEn, '时间', 'Time')}</span><strong>{detail.event_date || '—'} {detail.event_time || ''}{detail.duration_min ? ` · ${detail.duration_min}min` : ''}</strong></div>
+        <div><span>{L(isEn, '地点', 'Venue')}</span><strong>{detail.location || (detail.meeting_provider !== '线下' ? `${L(isEn, '线上', 'Online')} · ${detail.meeting_provider}` : '—')}</strong></div>
+        <div><span>{L(isEn, '会议', 'Meeting')}</span><strong>{detail.meeting_provider || '线下'}{detail.meeting_code ? ` · ${detail.meeting_code}` : ''}</strong></div>
+        {detail.meeting_url && <div className="wide"><span>{L(isEn, '入会链接', 'Join link')}</span><a href={detail.meeting_url} target="_blank" rel="noopener noreferrer">{detail.meeting_url}</a></div>}
+        {detail.recurrence && detail.recurrence !== 'none' && <div><span>{L(isEn, '重复', 'Repeat')}</span><strong>{RECURRENCE_LABELS[detail.recurrence]}{detail.recurrence_end ? ` · ${L(isEn, '至', 'until')} ${detail.recurrence_end}` : ''}</strong></div>}
       </div>
+      {signupsOf(detail.id).length ? <div className="table-wrap"><table className="data-table"><thead><tr><th>{L(isEn, '成员', 'Member')}</th><th>{L(isEn, '状态', 'Status')}</th><th>{L(isEn, '报名时间', 'Signed up')}</th><th>{L(isEn, '签到时间', 'Checked in')}</th></tr></thead>
+        <tbody>{signupsOf(detail.id).map(s => <tr key={s.id}><td><strong>{s.member_name}</strong></td><td><StatusPill status={s.status} isEn={isEn} /></td><td className="muted">{s.created_at || '—'}</td><td className="muted">{s.checked_in_at || '—'}</td></tr>)}</tbody></table>
+      </div> : <p className="muted event-empty-line">{L(isEn, '还没有人报名', 'No sign-ups yet')}</p>}
     </Sheet>}
 
     {qrFor && <Sheet title={L(isEn, '现场签到二维码', 'On-site check-in QR')} subtitle={qrFor.title} onClose={() => setQrFor(null)}

@@ -29,7 +29,7 @@ const TABLE_COLUMNS = {
   points_transactions: ['txid', 'member', 'team', 'type', 'source', 'date', 'status', 'reason', 'rule_id', 'report_id', 'points', 'year', 'month'],
   app_settings: ['key', 'value_zh', 'value_en'],
   points_rules: ['action', 'type', 'unit', 'scope', 'points', 'enabled', 'condition'],
-  events: ['title', 'event_date', 'event_time', 'location', 'capacity', 'description', 'status', 'created_by', 'created_at'],
+  events: ['title', 'event_date', 'event_time', 'location', 'capacity', 'description', 'status', 'created_by', 'created_at', 'duration_min', 'recurrence', 'recurrence_end', 'series_id', 'occurrence_index', 'meeting_provider', 'meeting_url', 'meeting_code', 'meeting_password', 'timezone'],
   event_signups: ['event_id', 'member_id', 'member_name', 'status', 'checked_in_at', 'note', 'created_at'],
   users: ['email', 'name', 'role', 'avatar', 'status'],
   team_members: ['member_id', 'team_id', 'is_primary', 'role'],
