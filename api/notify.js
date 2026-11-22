@@ -8,7 +8,6 @@
 import { requireSessionOrAppwrite } from './_lib/session.js';
 import { notifyEvent, EVENT_TYPES, sendReportReminders, buildCard } from './_lib/notify.js';
 import { listAll, findOne, getIntegration, logNotification } from './_lib/store.js';
-import { createTencentMeeting, cancelTencentMeeting, meetingConfigStatus } from './_lib/tmeet.js';
 import { sendCardToUser, sendCardToChat, sendTextToUser } from './_lib/feishu.js';
 
 const ymd = d => new Date(d).toISOString().slice(0, 10);
@@ -86,29 +85,6 @@ export default async function handler(req, res) {
   // 飞书 OAuth 会话与 Appwrite 邮箱密码会话都接受（否则用密码登录时通知会被静默吞掉）。
   const session = await requireSessionOrAppwrite(req, res);
   if (!session) return;
-
-  // 腾讯会议：能力探测（GET /api/notify?meeting=status）
-  if (req.body?.meeting === 'status') {
-    return res.status(200).json({ ok: true, ...meetingConfigStatus() });
-  }
-
-  if (req.body?.action === 'meeting-create') {
-    const body = req.body || {};
-    const result = await createTencentMeeting({
-      subject: body.subject, date: body.date, startTime: body.startTime,
-      durationMin: body.durationMin, password: body.password, timezone: body.timezone,
-    });
-    if (!result.ok) {
-      const status = result.code === 'NEEDS_SETUP' ? 501 : result.code === 'BAD_INPUT' ? 400 : 502;
-      return res.status(status).json({ ok: false, code: result.code, message: result.error });
-    }
-    return res.status(200).json({ ok: true, ...result });
-  }
-
-  if (req.body?.action === 'meeting-cancel') {
-    const result = await cancelTencentMeeting({ meetingId: req.body?.meetingId, meetingCode: req.body?.meetingCode });
-    return res.status(result.ok ? 200 : 502).json(result);
-  }
 
   // 任务指派提醒：给负责人发飞书单聊
   if (req.body?.action === 'task-assigned') {

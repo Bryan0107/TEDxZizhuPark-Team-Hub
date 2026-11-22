@@ -61,51 +61,18 @@ export function EventsPage({ events, setEvents, signups, setSignups, members = [
   const [qrFor, setQrFor] = useState(null);
   const [form, setForm] = useState(EMPTY_FORM);
   const [busy, setBusy] = useState(false);
-  const [autoMeeting, setAutoMeeting] = useState({ apiReady: false, checked: false });
 
   const signupsOf = id => signups.filter(s => s.event_id === id && s.status !== '已取消');
   const mineOf = id => myMember ? signupsOf(id).find(s => s.member_name === myMember.name) : null;
 
-  useEffect(() => {
-    if (!creating) return;
-    let alive = true;
-    fetch('/api/notify', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ meeting: 'status' }) }).then(r => r.json()).then(d => { if (alive) setAutoMeeting({ apiReady: !!d.apiReady, checked: true }); })
-      .catch(() => { if (alive) setAutoMeeting({ apiReady: false, checked: true }); });
-    return () => { alive = false; };
-  }, [creating]);
-
   const createEvent = async () => {
     if (!form.title.trim()) { notify(L(isEn, '请填写活动名称', 'Event title is required')); return; }
     setBusy(true);
-    // 选了腾讯会议但没填链接 → 保存前自动创建会议（API 优先，其次本机 CLI）。
-    let meetingPatch = {};
-    if (form.meeting_provider === '腾讯会议' && !String(form.meeting_url || '').trim()) {
-      try {
-        const res = await fetch('/api/notify', {
-          method: 'POST', headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({
-            action: 'meeting-create', subject: form.title.trim(), date: form.event_date || todayISO(),
-            startTime: form.event_time || '09:00', durationMin: Number(form.duration_min) || 60,
-          }),
-        });
-        const data = await res.json().catch(() => ({}));
-        if (data.ok && data.meeting) {
-          meetingPatch = { meeting_url: data.meeting.join_url, meeting_code: data.meeting.meeting_code };
-          notify(L(isEn, `已自动创建腾讯会议：${data.meeting.meeting_code}`, `Tencent Meeting created: ${data.meeting.meeting_code}`));
-        } else {
-          notify(L(isEn, `自动建会未成功（${data.message || '未配置'}），请手动填写入会链接`, `Auto-create failed: ${data.message || 'not configured'}`));
-        }
-      } catch {
-        notify(L(isEn, '自动建会失败，请手动填写入会链接', 'Auto-create failed, fill the link manually'));
-      }
-    }
-
     // 按重复规则展开成具体场次，每场独立报名/签到；series_id 关联整组。
     const dates = expandOccurrences({ date: form.event_date, recurrence: form.recurrence, endDate: form.recurrence_end });
     const seriesId = dates.length > 1 ? rid('series') : '';
     const base = {
       ...form,
-      ...meetingPatch,
       title: form.title.trim(),
       capacity: Number(form.capacity) || 0,
       duration_min: Number(form.duration_min) || 60,
@@ -196,15 +163,6 @@ export function EventsPage({ events, setEvents, signups, setSignups, members = [
   const removeEvent = async event => {
     if (role !== 'admin') return;
     try {
-      // 先取消腾讯会议，避免留下孤儿会议；失败不阻断删除。
-      if (event.meeting_provider === '腾讯会议' && (event.meeting_code || '')) {
-        const res = await fetch('/api/notify', {
-          method: 'POST', headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ action: 'meeting-cancel', meetingCode: event.meeting_code }),
-        }).catch(() => null);
-        const data = res ? await res.json().catch(() => ({})) : {};
-        if (!data.ok) notify(L(isEn, `活动已删除，但腾讯会议取消失败：${data.error || '未知原因'}`, 'Event deleted, meeting cancel failed'));
-      }
       await removeRow('events', event.id);
       setEvents(prev => prev.filter(e => e.id !== event.id));
       logAudit?.('删除活动', event.title, `${event.event_date || ''}${event.meeting_code ? ` · 会议 ${event.meeting_code}` : ''}`);
@@ -299,16 +257,16 @@ export function EventsPage({ events, setEvents, signups, setSignups, members = [
           <label className="field"><span>{L(isEn, '入会密码', 'Passcode')}</span><input value={form.meeting_password} onChange={e => setForm(f => ({ ...f, meeting_password: e.target.value }))} /></label>
           <label className="field field-full"><span>{L(isEn, '会议链接', 'Meeting link')}</span><input value={form.meeting_url} onChange={e => setForm(f => ({ ...f, meeting_url: e.target.value }))} placeholder={form.meeting_provider === '腾讯会议' ? 'https://meeting.tencent.com/dm/...' : form.meeting_provider === '飞书会议' ? 'https://vc.feishu.cn/j/...' : 'https://...'} /></label>
         </>}
-        {form.meeting_provider === '腾讯会议' && <p className="greeting-hint field-full"><Info size={14} /><span>{autoMeeting.apiReady
-          ? L(isEn, '保存时会自动创建腾讯会议并回填入会链接；已手动填写链接则不再创建。', 'A Tencent Meeting will be created on save unless you already filled a link.')
-          : L(isEn, '当前环境未配置腾讯会议开放平台密钥，保存后需手动填写入会链接；本机已登录 tmeet CLI 时会自动创建。', 'Tencent Meeting API is not configured — fill the join link manually, or run the tmeet CLI locally to auto-create.')}</span></p>}
+        {form.meeting_provider !== '线下' && <p className="greeting-hint field-full"><Info size={14} /><span>{L(isEn,
+          '在会议客户端里创建会议后，把会议号与入会链接粘贴到这里；填了链接后日历文件可直接一键入会。',
+          'Create the meeting in your meeting client, then paste the ID and join link here — the calendar file will link straight to it.')}</span></p>}
         <label className="field"><span>{L(isEn, '时区', 'Time zone')}</span><input value={L(isEn, 'China Standard Time (GMT+08:00)', '中国标准时间 (GMT+08:00)')} readOnly disabled /></label>
         <label className="field field-full"><span>{L(isEn, '说明', 'Description')}</span><textarea rows="3" value={form.description} onChange={e => setForm(f => ({ ...f, description: e.target.value }))} /></label>
       </div>
     </Sheet>}
 
     {detail && <Sheet title={detail.title} subtitle={`${detail.event_date || ''} ${detail.event_time || ''} · ${detail.location || ''}`} onClose={() => setDetail(null)} size="lg"
-      footer={<><button className="button button-ghost" onClick={() => exportList(detail)}><Download size={15} />{L(isEn, '导出名单', 'Export list')}</button><button className="button button-ghost" onClick={() => exportIcs(detail)}><CalendarPlus size={15} />{detail.series_id ? L(isEn, '整个系列加入日历', 'Whole series (.ics)') : L(isEn, '加入日历', 'Add to calendar')}</button>{canManage && <button className="button button-secondary" onClick={() => { setQrFor(detail); setDetail(null); }}><QrCode size={15} />{L(isEn, '签到二维码', 'Check-in QR')}</button>}{role === 'admin' && <button className="button button-ghost event-delete" onClick={() => { if (window.confirm(L(isEn, '删除该活动？若已创建腾讯会议会一并取消。', 'Delete this event? The Tencent Meeting will be cancelled too.'))) removeEvent(detail); }}><Trash2 size={15} />{L(isEn, '删除活动', 'Delete')}</button>}<button className="button button-primary" onClick={() => setDetail(null)}>{L(isEn, '关闭', 'Close')}</button></>}>
+      footer={<><button className="button button-ghost" onClick={() => exportList(detail)}><Download size={15} />{L(isEn, '导出名单', 'Export list')}</button><button className="button button-ghost" onClick={() => exportIcs(detail)}><CalendarPlus size={15} />{detail.series_id ? L(isEn, '整个系列加入日历', 'Whole series (.ics)') : L(isEn, '加入日历', 'Add to calendar')}</button>{canManage && <button className="button button-secondary" onClick={() => { setQrFor(detail); setDetail(null); }}><QrCode size={15} />{L(isEn, '签到二维码', 'Check-in QR')}</button>}{role === 'admin' && <button className="button button-ghost event-delete" onClick={() => { if (window.confirm(L(isEn, '删除该活动？该操作不可撤销。', 'Delete this event? This cannot be undone.'))) removeEvent(detail); }}><Trash2 size={15} />{L(isEn, '删除活动', 'Delete')}</button>}<button className="button button-primary" onClick={() => setDetail(null)}>{L(isEn, '关闭', 'Close')}</button></>}>
       {detail.description && <p className="event-detail-desc">{detail.description}</p>}
       <div className="event-detail-meta">
         <div><span>{L(isEn, '时间', 'Time')}</span><strong>{detail.event_date || '—'} {detail.event_time || ''}{detail.duration_min ? ` · ${detail.duration_min}min` : ''}</strong></div>

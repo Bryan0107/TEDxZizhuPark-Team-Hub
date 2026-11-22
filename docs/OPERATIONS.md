@@ -201,15 +201,10 @@ APPWRITE_KEY=<your-key> node scripts/seed-hall.mjs
 
 **注意**：飞书两项功能依赖 `feishu_integrations.chat_id` 与成员 `feishu_open_id`；未配置时接口返回 `skipped`，不会报错也不阻塞业务。
 
-## 14. 腾讯会议自动建会
+## 14. 腾讯会议 / 飞书会议（手动填写）
 
-保存活动时，若「会议方式 = 腾讯会议」且未填链接，前端会调用 `POST /api/meeting/create` 自动建会并回填会议号/入会链接。
+个人专业版腾讯会议不支持开放平台 API，因此**不做自动建会**：在会议客户端里建好会议后，把会议号、入会密码、入会链接粘贴到活动表单即可。
 
-**驱动顺序**
-1. **Open API（生产）**：需要环境变量 `TENCENT_MEETING_SECRET_ID`、`TENCENT_MEETING_SECRET_KEY`、`TENCENT_MEETING_USER_ID`（可选 `TENCENT_MEETING_APP_ID`）。走 `api.meeting.tencent.com` + TC3-HMAC-SHA256 签名。
-2. **本机 CLI（开发 / 自托管）**：检测到 `tmeet` 且已登录时，直接 `execFile tmeet meeting create`。
-3. 都不可用 → 返回 501 `NEEDS_SETUP`，前端退回手动填写，不阻塞创建活动。
-
-**取消**：删除活动时前端调用 `DELETE /api/meeting/create`（按 `meetingCode` 反查 `meetingId` 后取消）；取消失败只提示，不阻断删除。
-
-**注意**：Vercel 无本机 CLI，生产必须配置 Open API 密钥才能自动建会。
+- 会议方式：线下 / 腾讯会议 / 飞书会议 / 其他线上；选线上才显示会议号、密码、链接三个字段。
+- 导出的 .ics 会把入会链接写进 `LOCATION` 与 `URL`，手机日历点开可一键入会。
+- 删除活动不会联动取消会议，需在会议客户端里自行取消。
