@@ -286,8 +286,3 @@ body.scroll-locked { overflow: hidden; }
   .page-title-row { margin-bottom: 12px; }
   .modal-header { padding-top: calc(8px + var(--safe-top)); }
 }
-
-/* ── 5. 支持动态视口的浏览器（Safari 15+ / Chrome 108+） ────────────────── */
-@supports (height: 100dvh) {
-  .modal, .modal-md, .modal-lg, .modal-xl, .modal-full { height: 100dvh; max-height: 100dvh; }
-}

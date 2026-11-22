@@ -5,13 +5,14 @@
  */
 import React, { useEffect, useMemo, useState } from 'react';
 import {
-  CalendarDays, MapPin, Users, Plus, X, QrCode, Check, Download, Clock3,
-  Sparkles, CircleCheck, UserPlus, ArrowLeft, CalendarPlus, Video, Info, Trash2, Search, Mail,
+  CalendarDays, MapPin, Users, Plus, X, QrCode, Download, Clock3,
+  Sparkles, CircleCheck, UserPlus, ArrowLeft, CalendarPlus, Video, Info, Trash2, Mail,
 } from 'lucide-react';
 import { fetchTable, saveRow, removeRow } from './api';
 import { buildIcs, downloadIcs, expandOccurrences, RECURRENCE_LABELS, RECURRENCE_LABELS_EN } from './ics';
 import { computeRulePoints } from './rules';
 import { notifyPerson } from './inbox';
+import MemberMultiPicker from './MemberMultiPicker';
 
 const L = (isEn, zh, en) => (isEn ? en : zh);
 const todayISO = () => new Date().toISOString().slice(0, 10);
@@ -56,37 +57,6 @@ function useQr(text) {
     return () => { alive = false; };
   }, [text]);
   return src;
-}
-
-function InvitePicker({ members = [], value = [], onChange, isEn }) {
-  const [query, setQuery] = useState('');
-  const [open, setOpen] = useState(false);
-  const chosen = new Set(value);
-  const pool = members
-    .filter(m => !query || `${m.name}${m.english || ''}${m.team || ''}`.toLowerCase().includes(query.toLowerCase()))
-    .slice(0, 40);
-  const toggle = name => {
-    if (chosen.has(name)) onChange(value.filter(n => n !== name));
-    else onChange([...value, name]);
-  };
-  return <div className="invite-picker">
-    {value.length > 0 && <div className="invite-chips">
-      {value.map(name => <span className="invite-chip" key={name}>{name}<button type="button" aria-label="remove" onClick={() => toggle(name)}><X size={11} /></button></span>)}
-    </div>}
-    <div className="invite-search">
-      <Search size={15} />
-      <input value={query} onChange={e => { setQuery(e.target.value); setOpen(true); }} onFocus={() => setOpen(true)} onClick={() => setOpen(true)} placeholder={L(isEn, '搜索成员姓名或团队…', 'Search name or team…')} />
-      <span className="invite-count">{value.length} {L(isEn, '已选', 'selected')}</span>
-    </div>
-    {open && <div className="invite-list">
-      {pool.length ? pool.map(m => <button type="button" key={m.id || m.name} className={chosen.has(m.name) ? 'on' : ''} onMouseDown={e => e.preventDefault()} onClick={() => toggle(m.name)}>
-        <i className="invite-avatar">{(m.name || '?').slice(0, 1)}</i>
-        <div><strong>{m.name}</strong><small>{m.team || '—'}{m.role === '组长' ? L(isEn, ' · Lead', ' · 组长') : ''}</small></div>
-        {chosen.has(m.name) ? <Check size={14} /> : null}
-      </button>) : <div className="invite-empty">{L(isEn, '没有匹配的成员', 'No matching member')}</div>}
-      <button type="button" className="invite-done" onMouseDown={e => e.preventDefault()} onClick={() => setOpen(false)}>{L(isEn, '完成', 'Done')}</button>
-    </div>}
-  </div>;
 }
 
 export function EventsPage({ events, setEvents, signups, setSignups, reload, members = [], myMember, role = 'member', session, isEn, notify, logAudit, rules = [] }) {
@@ -344,7 +314,7 @@ export function EventsPage({ events, setEvents, signups, setSignups, reload, mem
       <div className="form-grid">
         <label className="field field-full"><span>{L(isEn, '活动名称', 'Title')} *</span><input value={form.title} onChange={e => setForm(f => ({ ...f, title: e.target.value }))} placeholder={L(isEn, '例如：十周年年度大会', 'e.g. 10th anniversary event')} /></label>
         <label className="field"><span>{L(isEn, '日期', 'Date')}</span><input type="date" value={form.event_date} onChange={e => setForm(f => ({ ...f, event_date: e.target.value }))} /></label>
-        <label className="field"><span>{L(isEn, '时间', 'Time')}</span><input value={form.event_time} onChange={e => setForm(f => ({ ...f, event_time: e.target.value }))} placeholder="14:00–17:30" /></label>
+        <label className="field"><span>{L(isEn, '时间（北京时间）', 'Time (GMT+8)')}</span><input value={form.event_time} onChange={e => setForm(f => ({ ...f, event_time: e.target.value }))} placeholder="14:00–17:30" /></label>
         <label className="field"><span>{L(isEn, '地点', 'Venue')}</span><input value={form.location} onChange={e => setForm(f => ({ ...f, location: e.target.value }))} placeholder="紫竹园区 · 报告厅" /></label>
         <label className="field"><span>{L(isEn, '时长（分钟）', 'Duration (min)')}</span>
           <select value={form.duration_min} onChange={e => setForm(f => ({ ...f, duration_min: Number(e.target.value) }))}>
@@ -353,16 +323,16 @@ export function EventsPage({ events, setEvents, signups, setSignups, reload, mem
         </label>
         <label className="field"><span>{L(isEn, '名额（0 = 不限）', 'Capacity (0 = unlimited)')}</span><input type="number" min="0" value={form.capacity} onChange={e => setForm(f => ({ ...f, capacity: e.target.value }))} /></label>
         <label className="field field-full"><span>{L(isEn, '邀请名单（无需报名，自动加入）', 'Invitees (added automatically, no sign-up needed)')}</span>
-          <InvitePicker members={members} value={form.invitees || []} onChange={list => setForm(f => ({ ...f, invitees: list }))} isEn={isEn} />
+          <MemberMultiPicker members={members} value={form.invitees || []} onChange={list => setForm(f => ({ ...f, invitees: list }))} isEn={isEn} selectAll showRole placeholder={L(isEn, '搜索并邀请成员…', 'Search and invite members…')} />
         </label>
         <label className="field"><span>{L(isEn, '重复', 'Repeat')}</span>
           <select value={form.recurrence} onChange={e => setForm(f => ({ ...f, recurrence: e.target.value }))}>
             {Object.entries(RECURRENCE_LABELS).map(([v, label]) => <option key={v} value={v}>{isEn ? RECURRENCE_LABELS_EN[v] : label}</option>)}
           </select>
         </label>
-        <label className="field"><span>{L(isEn, '重复结束日期', 'Repeat until')}</span>
-          <input type="date" value={form.recurrence_end} disabled={form.recurrence === 'none'} onChange={e => setForm(f => ({ ...f, recurrence_end: e.target.value }))} />
-        </label>
+        {form.recurrence !== 'none' && <label className="field"><span>{L(isEn, '重复结束日期', 'Repeat until')}</span>
+          <input type="date" value={form.recurrence_end} onChange={e => setForm(f => ({ ...f, recurrence_end: e.target.value }))} />
+        </label>}
         <label className="field"><span>{L(isEn, '会议方式', 'Meeting')}</span>
           <select value={form.meeting_provider} onChange={e => setForm(f => ({ ...f, meeting_provider: e.target.value }))}>
             {['线下', '腾讯会议', '飞书会议', '其他线上'].map(v => <option key={v} value={v}>{v}</option>)}
@@ -376,7 +346,6 @@ export function EventsPage({ events, setEvents, signups, setSignups, reload, mem
         {form.meeting_provider !== '线下' && <p className="greeting-hint field-full"><Info size={14} /><span>{L(isEn,
           '在会议客户端里创建会议后，把会议号与入会链接粘贴到这里；填了链接后日历文件可直接一键入会。',
           'Create the meeting in your meeting client, then paste the ID and join link here — the calendar file will link straight to it.')}</span></p>}
-        <label className="field"><span>{L(isEn, '时区', 'Time zone')}</span><input value={L(isEn, 'China Standard Time (GMT+08:00)', '中国标准时间 (GMT+08:00)')} readOnly disabled /></label>
         <label className="field field-full"><span>{L(isEn, '说明', 'Description')}</span><textarea rows="3" value={form.description} onChange={e => setForm(f => ({ ...f, description: e.target.value }))} /></label>
       </div>
     </Sheet>}
@@ -404,7 +373,7 @@ export function EventsPage({ events, setEvents, signups, setSignups, reload, mem
     {inviteFor && <Sheet title={L(isEn, '邀请成员', 'Invite members')} subtitle={inviteFor.title} onClose={() => setInviteFor(null)}
       footer={<><button className="button button-ghost" onClick={() => setInviteFor(null)}>{L(isEn, '取消', 'Cancel')}</button><button className="button button-primary" onClick={saveInvites}>{L(isEn, '保存邀请', 'Save invites')}</button></>}>
       <p className="greeting-hint"><Mail size={14} /><span>{L(isEn, '被邀请的成员会直接出现在名单里，无需报名；现场签到时同样扫码即可。', 'Invitees are added to the roster automatically — they only need to check in on site.')}</span></p>
-      <InvitePicker members={members} value={inviteSelection} onChange={setInviteSelection} isEn={isEn} />
+      <MemberMultiPicker members={members} value={inviteSelection} onChange={setInviteSelection} isEn={isEn} selectAll showRole placeholder={L(isEn, '搜索并邀请成员…', 'Search and invite members…')} />
     </Sheet>}
 
     {qrFor && <Sheet title={L(isEn, '现场签到二维码', 'On-site check-in QR')} subtitle={qrFor.title} onClose={() => setQrFor(null)}

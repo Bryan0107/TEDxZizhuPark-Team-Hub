@@ -126,17 +126,23 @@
 .invite-search svg{color:#9a958c;flex:none}
 .invite-search input{border:0;outline:0;flex:1;font-size:12.5px;background:transparent}
 .invite-count{font-size:11px;color:#9a958c;white-space:nowrap}
-.invite-list{max-height:230px;overflow:auto;border:1px solid #ece7dd;border-radius:10px;background:#fff;padding:4px}
-.invite-list>button{display:flex;align-items:center;gap:9px;width:100%;border:0;background:none;padding:7px 9px;border-radius:7px;text-align:left}
-.invite-list>button:hover{background:#faf7f1}
-.invite-list>button.on{background:#fdf1ee}
-.invite-list>button>div{flex:1;min-width:0;display:flex;flex-direction:column;gap:1px}
+.invite-list{border:1px solid #ece7dd;border-radius:10px;background:#fff;overflow:hidden}
+.invite-list-head{display:flex;align-items:center;justify-content:space-between;gap:8px;padding:6px 9px;border-bottom:1px solid #f4efe6}
+.invite-list-head>span{font-size:10.5px;color:#9a958c}
+.invite-select-all{border:0;background:none;color:#c72318;font-size:11px;padding:2px 5px;border-radius:5px}
+.invite-select-all:hover{background:#fdf1ee}
+.invite-options{max-height:210px;overflow:auto;padding:4px}
+.invite-options>button{display:flex;align-items:center;gap:9px;width:100%;border:0;background:none;padding:7px 9px;border-radius:7px;text-align:left}
+.invite-options>button:hover{background:#faf7f1}
+.invite-options>button.on{background:#fdf1ee}
+.invite-options>button>div{flex:1;min-width:0;display:flex;flex-direction:column;gap:1px}
 .invite-list strong{font-size:12.5px;font-weight:600;color:#2b2b29}
 .invite-list small{font-size:10.5px;color:#9a958c}
 .invite-list svg{color:#c72318;flex:none}
 .invite-avatar{width:26px;height:26px;border-radius:50%;background:#f2ede4;color:#7b7266;display:grid;place-items:center;font-size:11px;font-style:normal;flex:none}
 .invite-empty{padding:14px;text-align:center;font-size:12px;color:#9a958c}
-.invite-done{justify-content:center;font-size:12px;color:#c72318;border-top:1px solid #f1ece3;border-radius:0;margin-top:2px}
+.invite-done{display:flex;justify-content:center;width:100%;font-size:12px;color:#c72318;background:#fff;border:0;border-top:1px solid #f1ece3;border-radius:0;padding:9px}
+.invite-done:hover{background:#faf7f1}
 .event-detail-summary{display:flex;align-items:center;gap:10px;font-size:12px;color:#7b7266;margin-bottom:10px}
 .event-detail-summary strong{font-size:14px;color:#2b2b29}
 .event-detail-summary .button{margin-left:auto}

@@ -2028,7 +2028,7 @@ function PointsManagement({ transactions, setTransactions, members, setModal, ex
     <div className="card table-card"><div className="table-toolbar"><div className="filter-tabs">{tabs.map(([key, label]) => <button key={key} className={tab === key ? 'active' : ''} onClick={() => setTab(key)}>{label}</button>)}</div>{tab === '积分流水' && <div className="toolbar-right"><span className="static-year"><CalendarDays size={15} />{t('year2026')}</span><Button variant="secondary" icon={Download} onClick={() => exportCsv(isEn ? 'Point Transactions' : '积分流水')}>{isEn ? 'Export Transactions' : '导出流水'}</Button></div>}</div>
       {tab === '积分流水' && <><div className="table-wrap"><table className="data-table"><thead><tr><th>{t('member')}</th><th>{t('pointsSource')}</th><th>{t('pointsType')}</th><th>{t('points')}</th><th>{t('time')}</th><th>{t('status')}</th><th /></tr></thead><tbody>{transactions.map(tx => <tr key={tx.id}><td><div className="simple-person"><Avatar name={tx.member} size="xs" /><strong>{tx.member}</strong></div></td><td><strong>{tx.source}</strong><small className="transaction-id">{tx.id} · {tx.team}</small></td><td><StatusBadge>{tx.type}</StatusBadge></td><td><strong className={tx.points >= 0 ? 'positive-points' : 'negative-points'}>{tx.points > 0 ? '+' : ''}{tx.points}</strong></td><td className="muted">{tx.date}</td><td><StatusBadge>{tx.status}</StatusBadge></td><td><div className="row-actions">{isAdmin && tx.status === '待审核' ? <><button onClick={() => reviewTransaction(tx, true)}><Check size={14} />{isEn ? 'Approve' : '审核入账'}</button><button onClick={() => reviewTransaction(tx, false)}>{isEn ? 'Reject' : '驳回'}</button></> : <span className="muted">—</span>}</div></td></tr>)}</tbody></table></div><div className="table-footer"><span><LockKeyhole size={13} />{isEn ? 'Transactions cannot be deleted; use reversing adjustments' : '积分流水不可删除，仅支持反向调整'}</span><span>{isEn ? `${transactions.length} recent records` : `共 ${transactions.length} 条近期记录`}</span></div></>}
       {tab === '积分规则' && <div className="rules-content"><div className="rules-note"><Info size={17} /><span>{isEn ? 'Rules calculate suggested report points. Changes only affect future records.' : '以下规则用于自动计算月报建议积分。修改规则仅影响之后的记录，不会追溯调整历史积分。'}</span><Button variant="secondary" onClick={() => navigate('settings')}>{isEn ? 'Edit in Settings' : '去系统设置中编辑'}</Button></div>{rules.length ? <table className="data-table"><thead><tr><th>{t('contributionAction')}</th><th>{t('pointsType')}</th><th>{t('defaultPoints')}</th><th>{t('scoringUnit')}</th><th>{t('enabled')}</th></tr></thead><tbody>{rules.map(rule => <tr key={rule.id}><td><strong>{rule.action}</strong></td><td><StatusBadge>{rule.type}</StatusBadge></td><td><strong className="positive-points">{Number(rule.points) > 0 ? `+${rule.points}` : rule.points}</strong></td><td>{rule.unit || '—'}</td><td><span className={`toggle ${rule.enabled === false ? '' : 'on'}`}><i /></span></td></tr>)}</tbody></table> : <EmptyState title={isEn ? 'No points rules yet' : '尚未配置积分规则'} description={isEn ? 'Add rules in Settings → Points rules.' : '在「系统设置 → 积分规则」中新增规则后，这里会显示真实配置。'} />}</div>}
-      {tab === '排行榜' && <div className="ranking-content"><div className="ranking-note"><Info size={16} />{isEn ? 'The leaderboard recognizes contribution and is not the only measure of member value. Admins can control visibility in settings.' : '排行榜用于认可贡献，不作为成员价值的唯一评价标准。管理员可在系统设置中控制展示范围。'}</div>{ranked.length ? <div className="podium">{ranked.map((member, index) => <div className={`podium-item place-${index + 1}`} key={member.id}><div className="podium-avatar"><Avatar name={member.name} src={member.avatar} /><span>{index + 1}</span></div><strong>{member.name}</strong><small>{member.team}</small><b>{member.points}<em>{isEn ? 'pts' : '分'}</em></b><div style={{ height: `${[112, 142, 92][index]}px` }} /></div>)}</div> : <EmptyState title={isEn ? 'No rankings yet' : '暂无积分排名'} description={isEn ? 'Rankings appear once members earn points.' : '成员产生积分后，这里会显示排行榜。'} />}</div>}
+      {tab === '排行榜' && <div className="ranking-content"><div className="ranking-note"><Info size={16} />{isEn ? 'The leaderboard recognizes contribution and is not the only measure of member value. Admins can control visibility in settings.' : '排行榜用于认可贡献，不作为成员价值的唯一评价标准。管理员可在系统设置中控制展示范围。'}</div>{ranked.length ? <div className="podium">{ranked.map((member, index) => <div className={`podium-item place-${index + 1}`} key={member.id}><div className="podium-avatar"><Avatar name={member.name} src={member.avatar} /><span>{index + 1}</span></div><strong>{member.name}</strong><small>{member.team}</small><b>{member.points}<em>{isEn ? 'pts' : '分'}</em></b><div style={{ height: `${[142, 112, 92][index]}px` }} /></div>)}</div> : <EmptyState title={isEn ? 'No rankings yet' : '暂无积分排名'} description={isEn ? 'Rankings appear once members earn points.' : '成员产生积分后，这里会显示排行榜。'} />}</div>}
     </div>
   </div>;
 }
@@ -2479,7 +2479,7 @@ function TaskFields({ form, update, teams = [], members = [], isEn }) {
         <input type="date" value={toDateInput(form.due)} onChange={e => update('due', fromDateInput(e.target.value))} />
       </Field>
       <Field label={L('工时（小时）', 'Hours')} hint={L('计入团队工作量；按小时计分的规则会用到', 'Counts toward workload and hourly rules')}>
-        <input type="number" min="0" step="0.5" value={form.hours ?? 0} onChange={e => update('hours', Math.max(0, Number(e.target.value) || 0))} />
+        <input type="number" min="0" step="0.5" placeholder="0" value={form.hours ?? ''} onChange={e => update('hours', e.target.value)} />
       </Field>
       <Field label={L('重要程度', 'Priority')}>
         <div className="radio-group">{['普通', '重要'].map(p => <button type="button" key={p} className={form.priority === p ? 'selected' : ''} onClick={() => update('priority', p)}><i />{displayValue(p, isEn ? 'en' : 'zh')}</button>)}</div>
@@ -2513,7 +2513,7 @@ function TaskForm({ teams = [], members = [], defaultTeam = '', defaultOwner = '
   const [form, setForm] = useState({
     title: '', project: '2026 年度大会', team: defaultTeam || teams[0]?.name || '', owner: defaultOwner || '',
     due: '2026-11-20', status: '未开始', priority: '普通', type: '活动策划',
-    points: '3', description: '', collaborators: [],
+    points: '3', description: '', collaborators: [], hours: '',
   });
   const [error, setError] = useState('');
   const update = (key, value) => setForm(prev => ({ ...prev, [key]: value }));
@@ -2521,7 +2521,7 @@ function TaskForm({ teams = [], members = [], defaultTeam = '', defaultOwner = '
     if (!form.title.trim()) { setError(L('请填写任务名称', 'Please enter a task title')); return; }
     if (!form.team) { setError(L('请选择所属团队', 'Please choose a team')); return; }
     const picked = resolveMember(members, form.owner);
-    onSave({ ...form, owner: picked?.name || form.owner, team: form.team || picked?.team || '', title: form.title.trim(), due: fromDateInput(toDateInput(form.due)), points: Number(form.points) || 0 });
+    onSave({ ...form, owner: picked?.name || form.owner, team: form.team || picked?.team || '', title: form.title.trim(), due: fromDateInput(toDateInput(form.due)), points: Number(form.points) || 0, hours: form.hours === '' ? 0 : Math.max(0, Number(form.hours) || 0) });
   };
   return (
     <Modal
@@ -2552,6 +2552,8 @@ function TaskDetail({ task, teams = [], members = [], transactions = [], onClose
     priority: task.priority || '普通',
     points: task.points ? String(task.points) : '',
     description: task.note || task.description || '',
+    hours: task.hours ?? '',
+    collaborators: task.collaborators || [],
   });
   const [error, setError] = useState('');
   const update = (key, value) => setForm(prev => ({ ...prev, [key]: value }));
@@ -2561,7 +2563,7 @@ function TaskDetail({ task, teams = [], members = [], transactions = [], onClose
   const submit = () => {
     if (!form.title.trim()) { setError(L('请填写任务名称', 'Please enter a task title')); return; }
     const picked = resolveMember(members, form.owner);
-    onSave({ ...form, owner: picked?.name || form.owner, title: form.title.trim(), points: Number(form.points) || 0 }, { credit: form.status === '已完成' });
+    onSave({ ...form, owner: picked?.name || form.owner, title: form.title.trim(), points: Number(form.points) || 0, hours: form.hours === '' ? 0 : Math.max(0, Number(form.hours) || 0) }, { credit: form.status === '已完成' });
     onClose();
   };
   const creditNow = () => {
