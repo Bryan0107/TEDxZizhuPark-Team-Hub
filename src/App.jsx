@@ -1279,7 +1279,7 @@ function MainApp({ session, onLogout, onSessionUpdate, language, setLanguage }) 
                 <strong>{t('notifications')}{unreadCount > 0 ? ` · ${unreadCount}` : ''}</strong>
                 <button onClick={markAllInboxRead} disabled={!unreadCount}>{t('markAllRead')}</button>
               </div>
-              {myInbox.length ? myInbox.slice(0, 12).map(msg => <button
+              {myInbox.length ? <div className="notification-list">{myInbox.slice(0, 12).map(msg => <button
                 className={`notification-item ${msg.is_read ? '' : 'unread'}`}
                 key={msg.id}
                 onClick={() => {
@@ -1288,14 +1288,14 @@ function MainApp({ session, onLogout, onSessionUpdate, language, setLanguage }) 
                   if (target) { navigate(target); setNotificationsOpen(false); }
                 }}
               >
-                <span>{msg.type === 'points' ? <Coins size={17} /> : msg.type === 'event' ? <CalendarDays size={17} /> : msg.type === 'task' ? <CheckSquare size={17} /> : msg.type === 'appeal' ? <MessageSquare size={17} /> : <Bell size={17} />}</span>
-                <div>
+                <span className="notification-icon">{msg.type === 'points' ? <Coins size={17} /> : msg.type === 'event' ? <CalendarDays size={17} /> : msg.type === 'task' ? <CheckSquare size={17} /> : msg.type === 'appeal' ? <MessageSquare size={17} /> : <Bell size={17} />}</span>
+                <div className="notification-body">
                   <strong>{msg.title}</strong>
                   {msg.body ? <p>{msg.body}</p> : null}
                   <small>{msg.created}</small>
                 </div>
                 {msg.is_read ? null : <i className="inbox-unread-dot" />}
-              </button>) : <div className="search-empty">{isEn ? 'No notifications — all caught up.' : '暂无通知，一切正常。'}</div>}
+              </button>)}</div> : <div className="search-empty">{isEn ? 'No notifications — all caught up.' : '暂无通知，一切正常。'}</div>}
               <button className="all-notifications" onClick={() => { setNotificationsOpen(false); notify(isEn ? 'You are all caught up' : '已展示全部站内通知'); }}>{t('viewAllNotifications')}<ChevronRight size={14} /></button>
             </div>}
           </div>
