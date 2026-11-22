@@ -6,7 +6,7 @@
 import React, { useEffect, useMemo, useState } from 'react';
 import {
   CalendarDays, MapPin, Users, Plus, X, QrCode, Check, Download, Clock3,
-  Sparkles, CircleCheck, UserPlus, ArrowLeft, CalendarPlus, Video, Info, Trash2,
+  Sparkles, CircleCheck, UserPlus, ArrowLeft, CalendarPlus, Video, Info, Trash2, Search, Mail,
 } from 'lucide-react';
 import { fetchTable, saveRow, removeRow } from './api';
 import { buildIcs, downloadIcs, expandOccurrences, RECURRENCE_LABELS, RECURRENCE_LABELS_EN } from './ics';
@@ -18,6 +18,7 @@ const EMPTY_FORM = {
   title: '', event_date: '', event_time: '14:00', location: '', capacity: 0, description: '',
   duration_min: 90, recurrence: 'none', recurrence_end: '',
   meeting_provider: '线下', meeting_url: '', meeting_code: '', meeting_password: '', timezone: 'Asia/Shanghai',
+  invitees: [],
 };
 const rid = prefix => `${prefix}_${Date.now().toString(36)}${Math.random().toString(36).slice(2, 5)}`;
 
@@ -37,7 +38,9 @@ function Sheet({ title, subtitle, onClose, children, footer, size = 'md' }) {
 }
 
 function StatusPill({ status, isEn }) {
-  const tone = status === '已结束' ? 'gray' : status === '进行中' ? 'green' : 'red';
+  const tone = status === '已结束' ? 'gray'
+    : status === '已签到' || status === '进行中' ? 'green'
+      : status === '已邀请' ? 'blue' : 'red';
   return <span className={`status-badge ${tone}`}><i />{status || (isEn ? 'Open' : '报名中')}</span>;
 }
 
@@ -52,6 +55,37 @@ function useQr(text) {
     return () => { alive = false; };
   }, [text]);
   return src;
+}
+
+function InvitePicker({ members = [], value = [], onChange, isEn }) {
+  const [query, setQuery] = useState('');
+  const [open, setOpen] = useState(false);
+  const chosen = new Set(value);
+  const pool = members
+    .filter(m => !query || `${m.name}${m.english || ''}${m.team || ''}`.toLowerCase().includes(query.toLowerCase()))
+    .slice(0, 40);
+  const toggle = name => {
+    if (chosen.has(name)) onChange(value.filter(n => n !== name));
+    else onChange([...value, name]);
+  };
+  return <div className="invite-picker">
+    {value.length > 0 && <div className="invite-chips">
+      {value.map(name => <span className="invite-chip" key={name}>{name}<button type="button" aria-label="remove" onClick={() => toggle(name)}><X size={11} /></button></span>)}
+    </div>}
+    <div className="invite-search">
+      <Search size={15} />
+      <input value={query} onChange={e => { setQuery(e.target.value); setOpen(true); }} onFocus={() => setOpen(true)} onClick={() => setOpen(true)} placeholder={L(isEn, '搜索成员姓名或团队…', 'Search name or team…')} />
+      <span className="invite-count">{value.length} {L(isEn, '已选', 'selected')}</span>
+    </div>
+    {open && <div className="invite-list">
+      {pool.length ? pool.map(m => <button type="button" key={m.id || m.name} className={chosen.has(m.name) ? 'on' : ''} onMouseDown={e => e.preventDefault()} onClick={() => toggle(m.name)}>
+        <i className="invite-avatar">{(m.name || '?').slice(0, 1)}</i>
+        <div><strong>{m.name}</strong><small>{m.team || '—'}{m.role === '组长' ? L(isEn, ' · Lead', ' · 组长') : ''}</small></div>
+        {chosen.has(m.name) ? <Check size={14} /> : null}
+      </button>) : <div className="invite-empty">{L(isEn, '没有匹配的成员', 'No matching member')}</div>}
+      <button type="button" className="invite-done" onMouseDown={e => e.preventDefault()} onClick={() => setOpen(false)}>{L(isEn, '完成', 'Done')}</button>
+    </div>}
+  </div>;
 }
 
 export function EventsPage({ events, setEvents, signups, setSignups, members = [], myMember, role = 'member', session, isEn, notify, logAudit, rules = [] }) {
@@ -93,6 +127,27 @@ export function EventsPage({ events, setEvents, signups, setSignups, members = [
       const failed = results.filter(r => r.status === 'rejected').length;
       if (failed === rows.length) throw new Error('all failed');
       setEvents(prev => [...rows, ...prev]);
+
+      // 邀请名单：直接生成「已邀请」记录，被邀请人不用再报名。
+      const invited = (form.invitees || []).filter(Boolean);
+      if (invited.length) {
+        const byName = new Map(members.map(m => [m.name, m]));
+        const invites = [];
+        rows.forEach(evt => invited.forEach(name => invites.push({
+          id: rid('signup'),
+          event_id: evt.id,
+          member_id: byName.get(name)?.id || '',
+          member_name: name,
+          status: '已邀请',
+          checked_in_at: '',
+          created_at: todayISO(),
+        })));
+        const settled = await Promise.allSettled(invites.map(item => saveRow('event_signups', item)));
+        const saved = invites.filter((_, i) => settled[i].status === 'fulfilled');
+        if (saved.length) setSignups(prev => [...saved, ...prev]);
+        logAudit?.('邀请成员', row.title, `${invited.length} 人 × ${rows.length} 场`);
+      }
+
       logAudit?.('创建活动', row.title, `${rows.length} 场 · ${row.event_date || ''}${seriesId ? ` · ${RECURRENCE_LABELS[form.recurrence]}` : ''}`);
       notify(L(isEn,
         rows.length > 1 ? `已创建「${row.title}」，共 ${rows.length} 场${failed ? `（${failed} 场失败）` : ''}` : `活动「${row.title}」已创建`,
@@ -160,6 +215,37 @@ export function EventsPage({ events, setEvents, signups, setSignups, members = [
     const index = siblings.findIndex(e => e.id === event.id);
     return { total: siblings.length, index: index >= 0 ? index + 1 : 1, dates: siblings.map(e => e.event_date) };
   };
+  const [inviteFor, setInviteFor] = useState(null);
+  const [inviteSelection, setInviteSelection] = useState([]);
+
+  const openInvite = event => {
+    const existing = signups.filter(s => s.event_id === event.id && s.status !== '已取消').map(s => s.member_name);
+    setInviteSelection(existing);
+    setInviteFor(event);
+  };
+
+  const saveInvites = async () => {
+    if (!inviteFor) return;
+    const existing = new Set(signups.filter(s => s.event_id === inviteFor.id && s.status !== '已取消').map(s => s.member_name));
+    const toAdd = inviteSelection.filter(name => !existing.has(name));
+    if (!toAdd.length) { notify(L(isEn, '没有新增邀请', 'No new invitees')); setInviteFor(null); return; }
+    const byName = new Map(members.map(m => [m.name, m]));
+    const rows = toAdd.map(name => ({
+      id: rid('signup'), event_id: inviteFor.id, member_id: byName.get(name)?.id || '',
+      member_name: name, status: '已邀请', checked_in_at: '', created_at: todayISO(),
+    }));
+    try {
+      const settled = await Promise.allSettled(rows.map(item => saveRow('event_signups', item)));
+      const saved = rows.filter((_, i) => settled[i].status === 'fulfilled');
+      setSignups(prev => [...saved, ...prev]);
+      logAudit?.('邀请成员', inviteFor.title, `${toAdd.length} 人`);
+      notify(L(isEn, `已邀请 ${saved.length} 人`, `${saved.length} invitees added`));
+      setInviteFor(null);
+    } catch {
+      notify(L(isEn, '邀请失败，请重试', 'Failed to invite'));
+    }
+  };
+
   const removeEvent = async event => {
     if (role !== 'admin') return;
     try {
@@ -205,7 +291,7 @@ export function EventsPage({ events, setEvents, signups, setSignups, members = [
           <div className="event-card-head">
             <StatusPill status={event.status} isEn={isEn} />
             <h3>{event.title}</h3>
-            <p><Clock3 size={13} />{event.event_time || '—'}{event.duration_min ? ` · ${event.duration_min}min` : ''}<MapPin size={13} />{event.location || '—'}</p>
+            <p><Clock3 size={13} />{event.event_time || '—'}{event.duration_min ? ` · ${event.duration_min}min` : ''}<MapPin size={13} />{event.location || (event.meeting_provider && event.meeting_provider !== '线下' ? L(isEn, '线上', 'Online') : '—')}</p>
             <p className="event-tags">
               {event.meeting_provider && event.meeting_provider !== '线下' && <span className="event-tag"><Video size={12} />{event.meeting_provider}{event.meeting_code ? ` · ${event.meeting_code}` : ''}</span>}
               {event.recurrence && event.recurrence !== 'none' && <span className="event-tag">{RECURRENCE_LABELS[event.recurrence]}{seriesInfo(event) ? ` · 第 ${seriesInfo(event).index}/${seriesInfo(event).total} 场` : ''}</span>}
@@ -239,6 +325,9 @@ export function EventsPage({ events, setEvents, signups, setSignups, members = [
           </select>
         </label>
         <label className="field"><span>{L(isEn, '名额（0 = 不限）', 'Capacity (0 = unlimited)')}</span><input type="number" min="0" value={form.capacity} onChange={e => setForm(f => ({ ...f, capacity: e.target.value }))} /></label>
+        <label className="field field-full"><span>{L(isEn, '邀请名单（无需报名，自动加入）', 'Invitees (added automatically, no sign-up needed)')}</span>
+          <InvitePicker members={members} value={form.invitees || []} onChange={list => setForm(f => ({ ...f, invitees: list }))} isEn={isEn} />
+        </label>
         <label className="field"><span>{L(isEn, '重复', 'Repeat')}</span>
           <select value={form.recurrence} onChange={e => setForm(f => ({ ...f, recurrence: e.target.value }))}>
             {Object.entries(RECURRENCE_LABELS).map(([v, label]) => <option key={v} value={v}>{isEn ? RECURRENCE_LABELS_EN[v] : label}</option>)}
@@ -267,10 +356,15 @@ export function EventsPage({ events, setEvents, signups, setSignups, members = [
 
     {detail && <Sheet title={detail.title} subtitle={`${detail.event_date || ''} ${detail.event_time || ''} · ${detail.location || ''}`} onClose={() => setDetail(null)} size="lg"
       footer={<><button className="button button-ghost" onClick={() => exportList(detail)}><Download size={15} />{L(isEn, '导出名单', 'Export list')}</button><button className="button button-ghost" onClick={() => exportIcs(detail)}><CalendarPlus size={15} />{detail.series_id ? L(isEn, '整个系列加入日历', 'Whole series (.ics)') : L(isEn, '加入日历', 'Add to calendar')}</button>{canManage && <button className="button button-secondary" onClick={() => { setQrFor(detail); setDetail(null); }}><QrCode size={15} />{L(isEn, '签到二维码', 'Check-in QR')}</button>}{role === 'admin' && <button className="button button-ghost event-delete" onClick={() => { if (window.confirm(L(isEn, '删除该活动？该操作不可撤销。', 'Delete this event? This cannot be undone.'))) removeEvent(detail); }}><Trash2 size={15} />{L(isEn, '删除活动', 'Delete')}</button>}<button className="button button-primary" onClick={() => setDetail(null)}>{L(isEn, '关闭', 'Close')}</button></>}>
+      <div className="event-detail-summary">
+        <span>{L(isEn, '报名 / 邀请', 'Signed up / invited')}</span>
+        <strong>{signupsOf(detail.id).filter(s => s.status !== '已邀请').length} / {signupsOf(detail.id).filter(s => s.status === '已邀请').length}</strong>
+        {canManage && <button className="button button-ghost" onClick={() => openInvite(detail)}><UserPlus size={15} />{L(isEn, '邀请成员', 'Invite')}</button>}
+      </div>
       {detail.description && <p className="event-detail-desc">{detail.description}</p>}
       <div className="event-detail-meta">
         <div><span>{L(isEn, '时间', 'Time')}</span><strong>{detail.event_date || '—'} {detail.event_time || ''}{detail.duration_min ? ` · ${detail.duration_min}min` : ''}</strong></div>
-        <div><span>{L(isEn, '地点', 'Venue')}</span><strong>{detail.location || (detail.meeting_provider !== '线下' ? `${L(isEn, '线上', 'Online')} · ${detail.meeting_provider}` : '—')}</strong></div>
+        <div><span>{L(isEn, '地点', 'Venue')}</span><strong>{detail.location || (detail.meeting_provider && detail.meeting_provider !== '线下' ? L(isEn, '线上', 'Online') : '—')}</strong></div>
         <div><span>{L(isEn, '会议', 'Meeting')}</span><strong>{detail.meeting_provider || '线下'}{detail.meeting_code ? ` · ${detail.meeting_code}` : ''}</strong></div>
         {detail.meeting_url && <div className="wide"><span>{L(isEn, '入会链接', 'Join link')}</span><a href={detail.meeting_url} target="_blank" rel="noopener noreferrer">{detail.meeting_url}</a></div>}
         {detail.recurrence && detail.recurrence !== 'none' && <div><span>{L(isEn, '重复', 'Repeat')}</span><strong>{RECURRENCE_LABELS[detail.recurrence]}{detail.recurrence_end ? ` · ${L(isEn, '至', 'until')} ${detail.recurrence_end}` : ''}</strong></div>}
@@ -278,6 +372,12 @@ export function EventsPage({ events, setEvents, signups, setSignups, members = [
       {signupsOf(detail.id).length ? <div className="table-wrap"><table className="data-table"><thead><tr><th>{L(isEn, '成员', 'Member')}</th><th>{L(isEn, '状态', 'Status')}</th><th>{L(isEn, '报名时间', 'Signed up')}</th><th>{L(isEn, '签到时间', 'Checked in')}</th></tr></thead>
         <tbody>{signupsOf(detail.id).map(s => <tr key={s.id}><td><strong>{s.member_name}</strong></td><td><StatusPill status={s.status} isEn={isEn} /></td><td className="muted">{s.created_at || '—'}</td><td className="muted">{s.checked_in_at || '—'}</td></tr>)}</tbody></table>
       </div> : <p className="muted event-empty-line">{L(isEn, '还没有人报名', 'No sign-ups yet')}</p>}
+    </Sheet>}
+
+    {inviteFor && <Sheet title={L(isEn, '邀请成员', 'Invite members')} subtitle={inviteFor.title} onClose={() => setInviteFor(null)}
+      footer={<><button className="button button-ghost" onClick={() => setInviteFor(null)}>{L(isEn, '取消', 'Cancel')}</button><button className="button button-primary" onClick={saveInvites}>{L(isEn, '保存邀请', 'Save invites')}</button></>}>
+      <p className="greeting-hint"><Mail size={14} /><span>{L(isEn, '被邀请的成员会直接出现在名单里，无需报名；现场签到时同样扫码即可。', 'Invitees are added to the roster automatically — they only need to check in on site.')}</span></p>
+      <InvitePicker members={members} value={inviteSelection} onChange={setInviteSelection} isEn={isEn} />
     </Sheet>}
 
     {qrFor && <Sheet title={L(isEn, '现场签到二维码', 'On-site check-in QR')} subtitle={qrFor.title} onClose={() => setQrFor(null)}
@@ -364,6 +464,7 @@ export function CheckInPage({ eventId, session, onDone, isEn = false }) {
       <p className="checkin-meta"><CalendarDays size={15} />{event.event_date || '—'}{event.event_time ? ` · ${event.event_time}` : ''}</p>
       <p className="checkin-meta"><MapPin size={15} />{event.location || '—'}</p>
       <p className="checkin-person"><strong>{myMember?.name || session?.name || ''}</strong>{myMember?.team || ''}</p>
+      {signup?.status === '已邀请' && !checked && <p className="checkin-invited"><Mail size={13} />{L(isEn, '你已在邀请名单中，直接签到即可', 'You are on the invite list — just check in')}</p>}
       {checked ? <div className="checkin-done"><CircleCheck size={20} /><strong>{isEn ? 'Checked in' : '已签到'}</strong><span>{signup.checked_in_at}</span></div>
         : <button className="button button-primary checkin-btn" disabled={busy} onClick={doCheckIn}><Check size={17} />{busy ? (isEn ? 'Checking in…' : '签到中…') : (isEn ? 'Tap to check in' : '点击签到')}</button>}
       {msg && <p className="checkin-msg">{msg}</p>}
