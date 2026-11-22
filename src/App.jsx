@@ -28,6 +28,7 @@ import { notifyPerson } from './inbox';
 import { AppealSheet, MyAppeals, AppealsQueue, APPEAL_HANDLER } from './appeals';
 import YearReport from './YearReport';
 import MemberMultiPicker from './MemberMultiPicker';
+import LegalDocModal from './LegalDocs';
 import { computeRulePoints, TASK_ACTION } from './rules';
 import { logAudit } from './audit';
 import './hall.css';
@@ -622,6 +623,8 @@ function LoginPage({ onLogin, language, setLanguage }) {
     return '';
   })();
   const [busy, setBusy] = useState(false);
+  const [agreed, setAgreed] = useState(false);
+  const [legalDoc, setLegalDoc] = useState(null);
   // media === null 表示接口还没返回，此时先不渲染任何登录版式（避免经典版先闪现再切瀑布流），
   // 而是用与最终版式一致的骨架占位；接口返回后一次性定稿。
   const [media, setMedia] = useState(null);
@@ -639,9 +642,14 @@ function LoginPage({ onLogin, language, setLanguage }) {
     return () => { alive = false; clearTimeout(timer); };
   }, []);
 
+  const consentError = isEn
+    ? 'Please read and agree to the Terms of Use and Privacy Policy before signing in.'
+    : '请先阅读并勾选同意《使用协议》和《隐私权保护协议》，再进入系统。';
+
   const submit = async event => {
     event.preventDefault();
     if (busy) return;
+    if (!agreed) { setError(consentError); return; }
     setBusy(true); setError('');
     try {
       const user = await signIn(email, password);
@@ -658,10 +666,17 @@ function LoginPage({ onLogin, language, setLanguage }) {
     <p className="login-form-sub">{t('signInSubtitle')}</p>
     <label className="login-field"><span>{t('signInEmail')}</span><input type="email" required autoComplete="username" placeholder="name@tedxzizhupark.com" value={email} onChange={e => setEmail(e.target.value)} /></label>
     <label className="login-field"><span>{t('signInPassword')}</span><input type="password" required autoComplete="current-password" placeholder="••••••••" value={password} onChange={e => setPassword(e.target.value)} /></label>
+    <div className="login-consent">
+      <input id="login-consent" type="checkbox" checked={agreed} onChange={e => { setAgreed(e.target.checked); if (e.target.checked) setError(''); }} />
+      <label htmlFor="login-consent">{isEn ? 'I have read and agree to the' : '我已阅读并同意'}</label>
+      <button type="button" className="login-legal-link" onClick={() => setLegalDoc('terms')}>{isEn ? 'Terms of Use' : '《使用协议》'}</button>
+      <span>{isEn ? 'and' : '和'}</span>
+      <button type="button" className="login-legal-link" onClick={() => setLegalDoc('privacy')}>{isEn ? 'Privacy Policy' : '《隐私权保护协议》'}</button>
+    </div>
     {(error || feishuNotice) && <div className="login-error"><CircleAlert size={16} /><span>{error || feishuNotice}</span></div>}
     <button className="login-submit" type="submit" disabled={busy}>{busy ? t('signInLoading') : t('signInSubmit')}<ArrowUpRight size={17} /></button>
     <div className="login-divider"><span>{isEn ? 'or' : '或'}</span></div>
-    <a className="login-feishu" href="/api/feishu/oauth/start">
+    <a className="login-feishu" href="/api/feishu/oauth/start" onClick={event => { if (!agreed) { event.preventDefault(); setError(consentError); } }}>
       <img className="feishu-mark" src="/assets/feishu-mark.png" alt="" width="20" height="20" />
       <span>{isEn ? 'Sign in with Feishu' : '使用飞书登录'}</span>
       <ArrowUpRight size={15} />
@@ -669,6 +684,13 @@ function LoginPage({ onLogin, language, setLanguage }) {
     <p className="login-secure"><LockKeyhole size={14} /><span>{t('signInSecure')}</span></p>
     <p className="login-help">{t('signInHelp')}</p>
   </>;
+
+  const legalFooter = <div className="login-legal-footer">
+    <button type="button" onClick={() => setLegalDoc('terms')}>{isEn ? 'Terms of Use' : '使用协议'}</button>
+    <span>·</span>
+    <button type="button" onClick={() => setLegalDoc('privacy')}>{isEn ? 'Privacy Policy' : '隐私权保护协议'}</button>
+  </div>;
+  const legalModal = legalDoc ? <LegalDocModal doc={legalDoc} onClose={() => setLegalDoc(null)} /> : null;
 
   const storyPhotos = (media?.photos || []).slice(0, 25);
   const forceClassic = (() => {
@@ -730,12 +752,14 @@ function LoginPage({ onLogin, language, setLanguage }) {
         <div className="login-wf-card">
           <form className="login-form" onSubmit={submit}>{formBody}</form>
           <div className="login-panel-footer">© 2026 TEDxZizhuPark · Ideas change everything.</div>
+          {legalFooter}
         </div>
       </main>
       <footer className="login-wf-foot">
         <span>2026 · TEDxZizhuPark · Team Hub</span>
         <span>Ideas worth spreading</span>
       </footer>
+      {legalModal}
     </div>;
   }
 
@@ -754,7 +778,9 @@ function LoginPage({ onLogin, language, setLanguage }) {
       <div className="login-panel-top"><button className="language-button" onClick={() => setLanguage(isEn ? 'zh' : 'en')}><Globe2 size={16} /><span>{isEn ? '中文' : 'English'}</span><ChevronDown size={13} /></button></div>
       <form className="login-form" onSubmit={submit}>{formBody}</form>
       <div className="login-panel-footer">© 2026 TEDxZizhuPark · Ideas change everything.</div>
+      {legalFooter}
     </section>
+    {legalModal}
   </div>;
 }
 
