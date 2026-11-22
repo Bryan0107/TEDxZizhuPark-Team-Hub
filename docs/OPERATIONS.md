@@ -208,3 +208,24 @@ APPWRITE_KEY=<your-key> node scripts/seed-hall.mjs
 - 会议方式：线下 / 腾讯会议 / 飞书会议 / 其他线上；选线上才显示会议号、密码、链接三个字段。
 - 导出的 .ics 会把入会链接写进 `LOCATION` 与 `URL`，手机日历点开可一键入会。
 - 删除活动不会联动取消会议，需在会议客户端里自行取消。
+
+## 15. 更新说明（系统设置顶部）
+
+位置：系统设置页最上方 `Changelog` 卡片，含版本/日期、更新条目、对应提交链接、核心贡献者与 GitHub 仓库入口。
+
+**维护方式**：每次上线后在 `src/changelogData.js` 的 `RELEASES` 数组头部追加一条：
+
+```js
+{
+  version: 'v1.6',
+  date: 'YYYY-MM-DD',
+  title: '一句话主题',
+  commits: 提交数,
+  items: ['面向用户的改动，一条一句'],
+  link: `${REPO_URL}/commits/main?since=YYYY-MM-DD&until=次日`,
+}
+```
+
+- 条目只写用户能感知的变化，技术细节合并成一条。
+- 核心贡献者取自成员名册中「在编 + 组长/负责人」，自动更新，无需手填。
+- 默认展示最近 3 个版本，其余折叠。

@@ -23,6 +23,7 @@ import { fetchTable, syncTable, fetchSettings, saveSettings, fetchAppSetting, sa
 import HallOfHonor, { HallAdmin } from './hall';
 import { EventsPage, CheckInPage } from './events';
 import { CsvImportPanel, AuditPanel } from './admin';
+import Changelog from './Changelog';
 import { computeRulePoints, TASK_ACTION } from './rules';
 import { logAudit } from './audit';
 import './hall.css';
@@ -2074,6 +2075,7 @@ function SettingsPage({ notify, t, isEn, language, session, role, myTeam = '', o
 
   return <div className="page settings-page">
     <PageTitle title={t('settingsTitle')} subtitle={t('settingsSubtitle')} actions={<Button icon={Save} onClick={saveCurrent}>{t('saveChanges')}</Button>} />
+    <Changelog members={members} isEn={isEn} />
     <div className="settings-layout">
       <div className="settings-nav">{tabs.map(([id, label, Icon]) => <button key={id} className={tab === id ? 'active' : ''} onClick={() => setTab(id)}><Icon size={17} />{label}</button>)}</div>
       <div className="settings-content">

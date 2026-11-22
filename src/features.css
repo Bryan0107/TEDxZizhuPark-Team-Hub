@@ -149,3 +149,46 @@
 .team-member-text{min-width:0;display:flex;flex-direction:column;gap:1px;line-height:1.3}
 .team-member-text strong{font-size:12.5px;font-weight:600;color:#2b2b29;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 .team-member-text small{font-size:11px;color:#8d8d87;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+
+/* ── 更新说明 ───────────────────────────────────────────── */
+.changelog-card{padding:20px 22px;margin-bottom:18px}
+.changelog-head{display:flex;align-items:flex-start;justify-content:space-between;gap:16px;flex-wrap:wrap}
+.changelog-title{display:flex;gap:11px;min-width:0}
+.changelog-icon{width:36px;height:36px;border-radius:9px;background:#fdf1ee;color:#c72318;display:grid;place-items:center;flex:none}
+.changelog-title h2{font-size:14.5px;font-weight:650;color:#2b2b29;margin:0}
+.changelog-title p{font-size:11.5px;color:#96968f;margin:4px 0 0}
+.github-entry{display:inline-flex;align-items:center;gap:7px;border:1px solid #e2ded4;background:#fff;border-radius:8px;padding:8px 12px;font-size:12px;color:#3a3833;text-decoration:none;white-space:nowrap;transition:border-color .15s ease,color .15s ease}
+.github-entry:hover{border-color:#c72318;color:#c72318}
+
+.changelog-list{list-style:none;margin:16px 0 0;padding:0;display:flex;flex-direction:column}
+.changelog-item{display:grid;grid-template-columns:104px minmax(0,1fr);gap:16px;padding:14px 0;border-top:1px solid #f1ece3}
+.changelog-item:first-child{border-top:0;padding-top:6px}
+.changelog-side{display:flex;flex-direction:column;gap:4px;padding-top:2px}
+.changelog-version{display:inline-flex;width:fit-content;background:#fdf1ee;color:#c72318;border-radius:6px;padding:2px 8px;font-size:11px;font-weight:600;letter-spacing:.01em}
+.changelog-side time{font-size:11px;color:#9a958c;font-variant-numeric:tabular-nums}
+.changelog-content h3{font-size:13px;font-weight:600;color:#2b2b29;margin:0 0 6px}
+.changelog-points{margin:0;padding-left:15px;display:flex;flex-direction:column;gap:3px}
+.changelog-points li{font-size:12px;line-height:1.65;color:#6b6a64}
+.changelog-points li::marker{color:#d8cec0}
+.changelog-link{display:inline-flex;align-items:center;gap:5px;margin-top:7px;font-size:11px;color:#a8352a;text-decoration:none}
+.changelog-link:hover{text-decoration:underline}
+.changelog-more{display:inline-flex;align-items:center;gap:5px;margin-top:6px;border:1px solid #e6e2d9;background:#fff;border-radius:999px;padding:6px 14px;font-size:11.5px;color:#6b6a64}
+.changelog-more:hover{border-color:#c72318;color:#c72318}
+.changelog-more svg{transition:transform .18s ease}
+.changelog-more svg.up{transform:rotate(180deg)}
+
+.changelog-people{margin-top:16px;border-top:1px solid #f1ece3;padding-top:14px;display:flex;gap:18px;align-items:center;flex-wrap:wrap}
+.changelog-people-label{display:flex;align-items:center;gap:7px;font-size:12px;color:#4a4842;white-space:nowrap}
+.changelog-people-label svg{color:#a8352a}
+.changelog-people-label small{font-size:11px;color:#9a958c}
+.changelog-people-list{display:flex;flex-wrap:wrap;gap:8px}
+.changelog-person{display:inline-flex;align-items:center;gap:7px;background:#faf7f1;border:1px solid #f0ebe1;border-radius:999px;padding:3px 10px 3px 3px}
+.changelog-person-text{display:flex;flex-direction:column;line-height:1.25}
+.changelog-person-text strong{font-size:11.5px;font-weight:600;color:#2b2b29}
+.changelog-person-text small{font-size:10px;color:#9a958c}
+@media (max-width:760px){
+  .changelog-card{padding:16px}
+  .changelog-item{grid-template-columns:1fr;gap:6px}
+  .changelog-side{flex-direction:row;align-items:center;gap:8px}
+  .changelog-people{gap:10px}
+}
