@@ -27,7 +27,7 @@ import Changelog from './Changelog';
 import { notifyPerson } from './inbox';
 import { AppealSheet, MyAppeals, AppealsQueue, APPEAL_HANDLER } from './appeals';
 import YearReport from './YearReport';
-import FeaturePoll from './Poll';
+import MemberMultiPicker from './MemberMultiPicker';
 import { computeRulePoints, TASK_ACTION } from './rules';
 import { logAudit } from './audit';
 import './hall.css';
@@ -817,7 +817,6 @@ function MainApp({ session, onLogout, onSessionUpdate, language, setLanguage }) 
   useEffect(() => { let alive = true; fetchTable('points_rules').then(rows => { if (alive) setPointRules(rows || []); }).catch(() => {}); return () => { alive = false; }; }, []);
   const [inbox, setInbox, , reloadInbox] = useCloudState('tedx-hub-v2-inbox', 'inbox_messages', []);
   const [appeals, setAppeals, , reloadAppeals] = useCloudState('tedx-hub-v2-appeals', 'point_appeals', []);
-  const [featureVotes, setFeatureVotes, , reloadVotes] = useCloudState('tedx-hub-v2-votes', 'feature_votes', []);
   const [events, setEvents, , reloadEvents] = useCloudState('tedx-hub-v2-events', 'events', []);
   const [signups, setSignups, , reloadSignups] = useCloudState('tedx-hub-v2-event-signups', 'event_signups', []);
 
@@ -833,7 +832,6 @@ function MainApp({ session, onLogout, onSessionUpdate, language, setLanguage }) 
       reloadSignups();
       reloadInbox();
       reloadAppeals();
-      reloadVotes();
     };
     document.addEventListener('visibilitychange', refresh);
     window.addEventListener('focus', refresh);
@@ -841,7 +839,7 @@ function MainApp({ session, onLogout, onSessionUpdate, language, setLanguage }) 
       document.removeEventListener('visibilitychange', refresh);
       window.removeEventListener('focus', refresh);
     };
-  }, [reloadEvents, reloadSignups, reloadInbox, reloadAppeals, reloadVotes]);
+  }, [reloadEvents, reloadSignups, reloadInbox, reloadAppeals]);
   const [modal, setModal] = useState(null);
   const [toast, setToast] = useState('');
   const [search, setSearch] = useState('');
@@ -971,26 +969,6 @@ function MainApp({ session, onLogout, onSessionUpdate, language, setLanguage }) 
   };
 
   /** 任务积分入账：按任务 id 生成唯一流水，重复调用不会重复记账。 */
-  const voteFeature = async option => {
-    const voter = myMember?.name || session?.name || '';
-    if (!voter) { notify('未找到你的成员档案'); return; }
-    const existing = featureVotes.find(v => v.voter === voter);
-    const row = {
-      id: existing?.id || `vote_${Date.now().toString(36)}`,
-      voter,
-      option_key: option.key,
-      option_label: option.zh,
-      created: new Date().toISOString().replace('T', ' ').slice(0, 16),
-    };
-    try {
-      await saveRow('feature_votes', row);
-      setFeatureVotes(prev => (existing ? prev.map(v => (v.id === row.id ? row : v)) : [row, ...prev]));
-      notify(existing ? '已更新你的投票' : '已记录你的选择，谢谢反馈');
-    } catch {
-      notify('投票失败，请重试');
-    }
-  };
-
   const submitAppeal = async payload => {
     try {
       await saveRow('point_appeals', payload);
@@ -1032,50 +1010,67 @@ function MainApp({ session, onLogout, onSessionUpdate, language, setLanguage }) 
   };
 
   const creditTaskPoints = (task, { silent = false } = {}) => {
-    const ownerMember = resolveMember(activeMembers, task?.owner) || resolveMember(members, task?.owner);
-    const owner = ownerMember?.name || task?.owner || '';
-    if (!owner || !task?.id) return false;
-    const txId = `tx_task_${task.id}`;
-    if (transactions.some(tx => tx.id === txId)) return false;
-    // 任务未手填积分时，按「积分规则引擎」自动算分并进入待审核队列；
-    // 手填了积分则视为人工确认，直接入账（保持原有行为）。
+    if (!task?.id) return false;
+    // 负责人 + 团队成员，去重后每人各记一份积分。
+    const crew = [];
+    [...new Set([task.owner, ...(task.collaborators || [])].filter(Boolean))].forEach(name => {
+      const found = resolveMember(activeMembers, name) || resolveMember(members, name);
+      crew.push({ name: found?.name || name, member: found });
+    });
+    if (!crew.length) return false;
     const manual = Number(task?.points) || 0;
     const auto = manual > 0 ? null : computeRulePoints(pointRules, task, TASK_ACTION);
     const points = manual > 0 ? manual : auto?.points || 0;
     if (points <= 0) return false;
     const status = manual > 0 ? '已入账' : '待审核';
     const now = new Date();
-    setTransactions(prev => prev.some(tx => tx.id === txId) ? prev : [{
-      id: txId,
-      txid: txId,
-      member: owner,
-      team: task.team || ownerMember?.team || '',
-      type: manual > 0 ? '任务贡献' : (auto?.rule?.type || '任务贡献'),
-      source: `任务完成：${task.title || ''}`,
-      date: `${now.getMonth() + 1}月${now.getDate()}日`,
-      status,
-      points,
-      reason: manual > 0 ? `任务「${task.title || ''}」完成入账` : `按规则「${auto?.rule?.action || ''}」自动计算，待审核`,
-      rule_id: auto?.rule?.id || '',
-      report_id: String(task.id),
-      year: now.getFullYear(),
-      month: now.getMonth() + 1,
-    }, ...prev]);
-    notifyPerson({
-      member: owner,
-      email: ownerMember?.email || '',
-      type: 'points',
-      title: status === '待审核' ? `新增 ${points} 分待审核` : `获得 ${points} 积分`,
-      body: `任务「${task.title || ''}」${status === '待审核' ? '已生成积分记录，等待管理员确认' : '已完成，积分已入账'}`,
-      link: '/myPoints',
-      fields: [['任务', task.title || '—'], ['积分', `+${points}`], ['状态', status]],
+    const rows = [];
+    crew.forEach((person, index) => {
+      // 负责人沿用历史 id，保持与既有流水兼容；其他人按序号后缀。
+      const txId = index === 0 ? `tx_task_${task.id}` : `tx_task_${task.id}_${index}`;
+      if (transactions.some(tx => tx.id === txId)) return;
+      rows.push({
+        id: txId,
+        txid: txId,
+        member: person.name,
+        team: task.team || person.member?.team || '',
+        type: manual > 0 ? '任务贡献' : (auto?.rule?.type || '任务贡献'),
+        source: `任务完成：${task.title || ''}`,
+        date: `${now.getMonth() + 1}月${now.getDate()}日`,
+        status,
+        points,
+        reason: manual > 0 ? `任务「${task.title || ''}」完成入账` : `按规则「${auto?.rule?.action || ''}」自动计算，待审核`,
+        rule_id: auto?.rule?.id || '',
+        report_id: String(task.id),
+        year: now.getFullYear(),
+        month: now.getMonth() + 1,
+      });
     });
-    if (!silent) notify(status === '待审核' ? `已按规则生成 ${points} 分待审核记录，请管理员确认` : `已为 ${owner} 记入 ${points} 分`);
-    // 入账即通过飞书机器人通知（失败不影响业务）
+    if (!rows.length) return false;
+    setTransactions(prev => [...rows.filter(r => !prev.some(tx => tx.id === r.id)), ...prev]);
+
+    rows.forEach(row => {
+      const person = crew.find(c => c.name === row.member);
+      notifyPerson({
+        member: row.member,
+        email: person?.member?.email || '',
+        type: 'points',
+        title: status === '待审核' ? `新增 ${points} 分待审核` : `获得 ${points} 积分`,
+        body: `任务「${task.title || ''}」${crew.length > 1 ? `（${crew.length} 人协作）` : ''}${status === '待审核' ? '已生成积分记录，等待管理员确认' : '已完成，积分已入账'}`,
+        link: '/myPoints',
+        fields: [['任务', task.title || '—'], ['积分', `+${points}`], ['状态', status]],
+      });
+    });
+
+    if (!silent) {
+      notify(status === '待审核'
+        ? `已按规则为 ${rows.length} 位成员各生成 ${points} 分待审核记录`
+        : `已为 ${rows.map(r => r.member).join('、')} 各记入 ${points} 分`);
+    }
     pushFeishu('points.created', {
       title: '任务积分入账',
-      summary: `任务「${task.title || ''}」已完成，积分已记入负责人账户。`,
-      fields: [['成员', owner], ['所属团队', task.team || '—'], ['积分变化', `+${points}`], ['来源', `任务完成：${task.title || ''}`]],
+      summary: `任务「${task.title || ''}」已完成，${rows.length} 位成员各记 ${points} 分。`,
+      fields: [['成员', rows.map(r => r.member).join('、')], ['所属团队', task.team || '—'], ['积分变化', `每人 +${points}`], ['来源', `任务完成：${task.title || ''}`]],
     });
     return status;
   };
@@ -1224,7 +1219,7 @@ function MainApp({ session, onLogout, onSessionUpdate, language, setLanguage }) 
     case 'teams': content = <TeamsPage teams={teamView} members={activeMembers} {...shared} />; break;
     case 'members': content = <MembersPage members={members} setMembers={setMembers} teams={teams} reserves={reserves} setReserves={setReserves} transactions={transactions} tasks={tasks} reports={reports} signups={signups} {...shared} />; break;
     case 'events': content = <EventsPage events={events} setEvents={setEvents} signups={signups} setSignups={setSignups} reload={reloadSignups} members={activeMembers} myMember={myMember} role={role} session={session} isEn={isEn} notify={notify} logAudit={(action, target, detail) => logAudit(session, action, target, detail)} />; break;
-    case 'updates': content = <UpdatesPage members={members} isEn={isEn} t={t} votes={featureVotes} voter={myMember?.name || session?.name || ''} onVote={voteFeature} />; break;
+    case 'updates': content = <UpdatesPage members={members} isEn={isEn} t={t} />; break;
     case 'myPoints': content = <MyPointsPage transactions={transactions} tasks={tasks} teams={teams} member={myMember} ready={transactionsReady} appeals={appeals} onAppeal={submitAppeal} reports={reports} signups={signups} {...shared} />; break;
     case 'pointsManagement': content = <PointsManagement transactions={transactions} setTransactions={setTransactions} members={activeMembersWithPoints} isAdmin={role === 'admin'} appeals={appeals} onResolveAppeal={resolveAppeal} {...shared} />; break;
     case 'analytics': content = <AnalyticsPage teams={teamView} monthlyTrend={monthlyTrend} transactions={transactions} tasks={tasks} members={activeMembers} {...shared} />; break;
@@ -1312,7 +1307,8 @@ function MainApp({ session, onLogout, onSessionUpdate, language, setLanguage }) 
     </div>
 
     {modal?.type === 'newTask' && <TaskForm teams={teams} members={activeMembers} defaultTeam={myMember?.team || ''} defaultOwner={myMember?.name || ''} isEn={isEn} onClose={closeModal} onSave={task => {
-      const created = { ...task, id: Date.now(), progress: task.status === '已完成' ? 100 : 0, collaborators: task.owner ? [task.owner] : [] };
+      const crew = [...new Set([task.owner, ...(task.collaborators || [])].filter(Boolean))];
+      const created = { ...task, id: Date.now(), progress: task.status === '已完成' ? 100 : 0, collaborators: crew };
       setTasks(prev => [created, ...prev]);
       const credited = created.status === '已完成' ? creditTaskPoints(created, { silent: true }) : false;
     const creditedLabel = credited === '待审核' ? ` · ${created.points} 分待审核` : (credited ? ` · ${created.points} pts credited to ${created.owner}` : '');
@@ -1322,12 +1318,13 @@ function MainApp({ session, onLogout, onSessionUpdate, language, setLanguage }) 
         : `新任务已创建${credited === '待审核' ? `，${created.points} 分待审核` : (credited ? `，${created.points} 分已记入 ${created.owner}` : '并通知负责人')}`);
       notifyFeishu('event.created', { title: '新建活动/任务', summary: 'Team Hub 中创建了新的活动或任务。', fields: [['任务', task.title || '—'], ['所属团队', task.team || '—'], ['负责人', task.owner || '—'], ['截止日期', task.due || '—']] });
       // 站内通知 + 负责人飞书单聊（未绑定飞书时服务端自动跳过，不影响创建）
-      if (created.owner) notifyPerson({
-        member: created.owner, type: 'task', title: '你有一个新任务',
+      (created.collaborators || []).forEach(name => notifyPerson({
+        member: name, type: 'task',
+        title: name === created.owner ? '你有一个新任务' : '你被加入了一个任务',
         body: `${created.title}${created.due ? ` · 截止 ${created.due}` : ''}`,
         link: '/tasks',
-        fields: [['任务', created.title || '—'], ['团队', created.team || '—'], ['截止', created.due || '—'], ['优先级', created.priority || '普通']],
-      });
+        fields: [['任务', created.title || '—'], ['团队', created.team || '—'], ['负责人', created.owner || '—'], ['截止', created.due || '—'], ['优先级', created.priority || '普通']],
+      }));
     }} />}
     {modal?.type === 'taskDetail' && (() => {
       const liveTask = tasks.find(item => item.id === modal.data.id) || modal.data;
@@ -1345,7 +1342,7 @@ function MainApp({ session, onLogout, onSessionUpdate, language, setLanguage }) 
             ...liveTask,
             ...patch,
             progress: patch.status === '已完成' ? 100 : (patch.status === '未开始' ? 0 : (liveTask.progress || 0)),
-            collaborators: patch.owner ? [patch.owner] : liveTask.collaborators,
+            collaborators: [...new Set([patch.owner || liveTask.owner, ...((patch.collaborators ?? liveTask.collaborators) || [])].filter(Boolean))],
           };
           setTasks(prev => prev.map(item => item.id === liveTask.id ? next : item));
           const credited = credit ? creditTaskPoints(next, { silent: true }) : false;
@@ -1756,9 +1753,10 @@ function TasksPage({ tasks, setTasks, teams = [], members = [], creditPoints, se
     // 状态改为「已完成」时，自动把任务积分记到负责人账户（同一任务只入账一次）。
     let credited = false;
     if (status === '已完成') credited = creditPoints?.({ ...task, status }) || false;
+    const crewCount = new Set([task.owner, ...(task.collaborators || [])].filter(Boolean)).size;
     const creditNote = credited === '待审核'
-      ? (isEn ? ' · points pending review' : '，积分待审核')
-      : (credited ? (isEn ? ' · points credited' : '，任务积分已入账') : '');
+      ? (isEn ? ` · ${crewCount} members pending review` : `，${crewCount} 位成员积分待审核`)
+      : (credited ? (isEn ? ` · points credited to ${crewCount} members` : `，已为 ${crewCount} 位成员记入积分`) : '');
     notify(isEn
       ? `“${task.title}” moved to ${displayValue(status, 'en')}${creditNote}`
       : `「${task.title}」已更新为${status}${creditNote}`);
@@ -2110,11 +2108,10 @@ const EXPORT_KINDS = [
   ['年度团队数据', '年度团队统计', 'Annual team statistics'],
 ];
 
-function UpdatesPage({ members, isEn, t, votes = [], voter = '', onVote }) {
+function UpdatesPage({ members, isEn, t }) {
   return <div className="page updates-page">
     <PageTitle title={t('updatesTitle')} subtitle={t('updatesSubtitle')} />
     <Changelog members={members} isEn={isEn} />
-    <FeaturePoll votes={votes} voter={voter} onVote={onVote} isEn={isEn} />
   </div>;
 }
 
@@ -2446,6 +2443,15 @@ function TaskFields({ form, update, teams = [], members = [], isEn }) {
       <Field label={L('任务负责人', 'Owner')} required hint={matchedOwner ? `${matchedOwner.team || ''}${matchedOwner.position ? ` · ${matchedOwner.position}` : ''}` : L('从在册成员中选择，积分才能入账', 'Pick a roster member so points can be credited')}>
         <MemberPicker value={form.owner} members={members} onChange={v => { update('owner', v); const picked = resolveMember(members, v); if (picked?.team) update('team', picked.team); }} isEn={isEn} />
       </Field>
+      <Field label={L('团队成员', 'Team members')} full hint={L('可一次关联多位成员，任务完成时每人各记一份积分', 'Associate several members; each earns points when the task is completed')}>
+        <MemberMultiPicker
+          members={members.filter(m => m.name !== form.owner)}
+          value={(form.collaborators || []).filter(n => n !== form.owner)}
+          onChange={list => update('collaborators', list)}
+          isEn={isEn}
+          placeholder={L('搜索并添加一起做这件事的成员…', 'Search members working on this task…')}
+        />
+      </Field>
       <Field label={L('截止日期', 'Due date')}>
         <input type="date" value={toDateInput(form.due)} onChange={e => update('due', fromDateInput(e.target.value))} />
       </Field>
@@ -2458,7 +2464,7 @@ function TaskFields({ form, update, teams = [], members = [], isEn }) {
       <Field label={L('任务状态', 'Status')}>
         <select value={form.status} onChange={e => update('status', e.target.value)}>{TASK_STATUSES.map(v => <option key={v} value={v}>{displayValue(v, isEn ? 'en' : 'zh')}</option>)}</select>
       </Field>
-      <Field label={L('完成积分', 'Task points')} hint={L('任务完成后自动记入负责人积分账户', 'Credited to the owner once the task is completed')}>
+      <Field label={L('完成积分', 'Task points')} hint={L('任务完成时每位关联成员各记一份（留空则按规则自动计算）', 'Each associated member earns this amount on completion (blank = auto rule)')}>
         <div className="number-input">
           <input
             type="text"
@@ -2470,7 +2476,7 @@ function TaskFields({ form, update, teams = [], members = [], isEn }) {
           />
           <span>{L('分', 'pts')}</span>
         </div>
-        {points > 0 && form.owner ? <small className="field-inline-hint">{L(`完成后 ${form.owner} 将获得 ${points} 分`, `${form.owner} earns ${points} pts on completion`)}</small> : null}
+        {points > 0 && form.owner ? <small className="field-inline-hint">{L(`完成后 ${[form.owner, ...(form.collaborators || [])].filter(Boolean).length} 人各获得 ${points} 分`, `Each of ${[form.owner, ...(form.collaborators || [])].filter(Boolean).length} members earns ${points} pts`)}</small> : null}
       </Field>
       <Field label={L('任务说明', 'Description')} full>
         <textarea rows="3" placeholder={L('补充任务目标、交付要求或成果链接…', 'Goal, deliverable or reference link…')} value={form.description} onChange={e => update('description', e.target.value)} />
@@ -2484,7 +2490,7 @@ function TaskForm({ teams = [], members = [], defaultTeam = '', defaultOwner = '
   const [form, setForm] = useState({
     title: '', project: '2026 年度大会', team: defaultTeam || teams[0]?.name || '', owner: defaultOwner || '',
     due: '2026-11-20', status: '未开始', priority: '普通', type: '活动策划',
-    points: '3', description: '',
+    points: '3', description: '', collaborators: [],
   });
   const [error, setError] = useState('');
   const update = (key, value) => setForm(prev => ({ ...prev, [key]: value }));
@@ -2558,6 +2564,7 @@ function TaskDetail({ task, teams = [], members = [], transactions = [], onClose
         <span><Avatar name={form.owner || '?'} src={resolveMember(members, form.owner)?.avatar} size="xs" />{resolveMember(members, form.owner)?.name || form.owner || L('未指定负责人', 'No owner')}</span>
         <span><CalendarDays size={14} />{form.due || '—'}</span>
         <span><Coins size={14} />{Number(form.points) || 0} {L('分', 'pts')}</span>
+        {(form.collaborators || []).filter(n => n && n !== form.owner).length > 0 && <span className="task-crew"><UsersRound size={14} />{L('协作', 'Crew')} {form.collaborators.filter(n => n && n !== form.owner).length}</span>}
       </div>
 
       <TaskFields form={form} update={update} teams={teams} members={members} isEn={isEn} />

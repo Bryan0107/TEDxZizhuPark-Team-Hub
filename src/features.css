@@ -273,3 +273,4 @@
   .poll-count{grid-area:count}
   .poll-bar{grid-area:bar}
 }
+.task-crew{display:inline-flex;align-items:center;gap:4px;color:#7b7266}

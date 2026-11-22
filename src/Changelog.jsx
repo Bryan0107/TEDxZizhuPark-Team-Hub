@@ -70,7 +70,6 @@ export default function Changelog({ members = [], isEn = false }) {
       <div className="changelog-people-label">
         <Users size={15} />
         <span>{L(isEn, '核心贡献者', 'Core contributors')}</span>
-        <small>{L(isEn, '团队负责人与管理组', 'Team leads & management')}</small>
       </div>
       <div className="changelog-people-list">
         {contributors.length ? contributors.map(m => <span className="changelog-person" key={m.id || m.name}>
