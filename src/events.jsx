@@ -239,10 +239,12 @@ export function EventsPage({ events, setEvents, signups, setSignups, members = [
             {['线下', '腾讯会议', '飞书会议', '其他线上'].map(v => <option key={v} value={v}>{v}</option>)}
           </select>
         </label>
-        <label className="field"><span>{L(isEn, '会议号', 'Meeting ID')}</span><input value={form.meeting_code} disabled={form.meeting_provider === '线下'} onChange={e => setForm(f => ({ ...f, meeting_code: e.target.value }))} placeholder="123 456 789" /></label>
-        <label className="field field-full"><span>{L(isEn, '会议链接', 'Meeting link')}</span><input value={form.meeting_url} disabled={form.meeting_provider === '线下'} onChange={e => setForm(f => ({ ...f, meeting_url: e.target.value }))} placeholder={form.meeting_provider === '腾讯会议' ? 'https://meeting.tencent.com/dm/...' : 'https://vc.feishu.cn/j/...'} /></label>
-        <label className="field"><span>{L(isEn, '入会密码', 'Passcode')}</span><input value={form.meeting_password} disabled={form.meeting_provider === '线下'} onChange={e => setForm(f => ({ ...f, meeting_password: e.target.value }))} /></label>
-        <label className="field"><span>{L(isEn, '时区', 'Time zone')}</span><input value="(GMT+08:00) 中国标准时间 · Asia/Shanghai" readOnly disabled /></label>
+        {form.meeting_provider !== '线下' && <>
+          <label className="field"><span>{L(isEn, '会议号', 'Meeting ID')}</span><input value={form.meeting_code} onChange={e => setForm(f => ({ ...f, meeting_code: e.target.value }))} placeholder="123 456 789" /></label>
+          <label className="field"><span>{L(isEn, '入会密码', 'Passcode')}</span><input value={form.meeting_password} onChange={e => setForm(f => ({ ...f, meeting_password: e.target.value }))} /></label>
+          <label className="field field-full"><span>{L(isEn, '会议链接', 'Meeting link')}</span><input value={form.meeting_url} onChange={e => setForm(f => ({ ...f, meeting_url: e.target.value }))} placeholder={form.meeting_provider === '腾讯会议' ? 'https://meeting.tencent.com/dm/...' : form.meeting_provider === '飞书会议' ? 'https://vc.feishu.cn/j/...' : 'https://...'} /></label>
+        </>}
+        <label className="field"><span>{L(isEn, '时区', 'Time zone')}</span><input value={L(isEn, 'China Standard Time (GMT+08:00)', '中国标准时间 (GMT+08:00)')} readOnly disabled /></label>
         <label className="field field-full"><span>{L(isEn, '说明', 'Description')}</span><textarea rows="3" value={form.description} onChange={e => setForm(f => ({ ...f, description: e.target.value }))} /></label>
       </div>
     </Sheet>}

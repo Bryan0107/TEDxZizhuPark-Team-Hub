@@ -191,6 +191,7 @@ APPWRITE_KEY=<your-key> node scripts/seed-hall.mjs
 | 功能 | 入口 | 数据/接口 | 说明 |
 |---|---|---|---|
 | 活动报名 + 扫码签到 | 侧栏「活动与签到」 | `events`、`event_signups` 两张新表；`/checkin/:id` 公开页 | 报名→现场扫码→一键签到；签到按规则记「基础参与」积分；二维码由 `qrcode` 包本地生成（懒加载） |
+| 循环活动 + 会议 + 日历 | 活动表单 / 卡片 / 详情 | `events` 新增 `recurrence`/`recurrence_end`/`series_id`/`occurrence_index`/`meeting_provider`/`meeting_url`/`meeting_code`/`meeting_password`/`duration_min`/`timezone`；`src/ics.js` | 重复规则展开为独立场次（默认最多 12 场、硬上限 52）；会议方式支持线下/腾讯会议/飞书会议/其他线上；导出 .ics 单场或整系列（RRULE+UNTIL，UTC 时间，LOCATION 用入会链接，含 30 分钟提醒） |
 | 积分规则引擎 | 系统设置 → 积分规则 | `points_rules`（新增 `condition` 列） | 任务完成时按 `action/条件/单位` 自动算分，结果进「待审核」队列；手填积分仍直接入账 |
 | CSV 导入 | 系统设置 → 数据与备份 | `src/csv.js` + `CsvImportPanel` | 成员/任务/积分/团队四类模板；先预览校验再写入，逐行报告失败原因 |
 | 操作审计 | 系统设置 → 操作审计 | `audit_logs` | 成员公开授权、影像上传/公开/删除/归档、积分调整、创建活动均留痕 |
