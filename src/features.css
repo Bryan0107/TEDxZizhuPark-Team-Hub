@@ -113,3 +113,5 @@
 .event-detail-meta a{font-size:12px;color:#c72318;word-break:break-all;text-decoration:none}
 .event-detail-meta a:hover{text-decoration:underline}
 @media (max-width:760px){.event-detail-meta{grid-template-columns:1fr 1fr}}
+.event-delete{color:#b3261e}
+.event-delete:hover{border-color:#e7b3ac;background:#fdf1ee}
