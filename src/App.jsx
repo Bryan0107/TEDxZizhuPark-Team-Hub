@@ -3198,11 +3198,13 @@ function TeamDetail({ team, reports = [], tasks = [], members = [], onClose, nav
       <div className="team-members-preview">
         <h3>{L('团队成员', 'Team members')}</h3>
         {teamMembers.length ? (
-          <div className="team-member-grid">{teamMembers.slice(0, 16).map(m => (
-            <div className="team-member-tile" key={m.id}>
-              <Avatar name={m.name} src={m.avatar} />
-              <strong title={m.name}>{m.name}</strong>
-              <small>{m.role === '组长' ? L('组长', 'Lead') : (m.position || L('成员', 'Member'))}</small>
+          <div className="team-member-list">{teamMembers.slice(0, 16).map(m => (
+            <div className="team-member-row" key={m.id}>
+              <Avatar name={m.name} src={m.avatar} size="sm" />
+              <div className="team-member-text">
+                <strong title={m.name}>{m.name}</strong>
+                <small>{m.role === '组长' ? L('组长', 'Lead') : (m.position || L('成员', 'Member'))}</small>
+              </div>
             </div>
           ))}</div>
         ) : (
