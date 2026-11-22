@@ -1,4 +1,4 @@
-import React, { useContext, useEffect, useMemo, useRef, useState, lazy, Suspense } from 'react';
+import React, { useContext, useCallback, useEffect, useMemo, useRef, useState, lazy, Suspense } from 'react';
 import {
   LayoutDashboard, Coins, FileText, CheckSquare, UsersRound, UserRound,
   BarChart3, Settings, Search, Bell, ChevronDown, ChevronRight, Plus,
@@ -384,12 +384,26 @@ function useCloudState(storageKey, table, seed) {
   const [syncEnabled, setSyncEnabled] = useState(false);
   // ready 用于区分「还没读到」和「确实是 0 条」，页面据此显示加载态而不是假空态。
   const [ready, setReady] = useState(false);
+  const [reloadKey, setReloadKey] = useState(0);
   const booted = useRef(false);
+  // 供页面在回到前台 / 手动刷新时重新拉取，避免长期显示本地旧缓存。
+  const reload = useCallback(() => setReloadKey(k => k + 1), []);
   useEffect(() => {
     let cancelled = false;
     (async () => {
+      const read = async attempt => {
+        try {
+          return await fetchTable(table);
+        } catch (err) {
+          if (attempt === 0) {
+            await new Promise(r => setTimeout(r, 1200));
+            return read(1);
+          }
+          throw err;
+        }
+      };
       try {
-        let remote = await fetchTable(table);
+        let remote = await read(0);
         // 仅当本地定义了种子数据时才播种；空种子意味着「从空白开始」，
         // 此时必须用云端空结果覆盖浏览器里可能残留的旧缓存。
         if (!remote.length && seed.length) {
@@ -407,13 +421,13 @@ function useCloudState(storageKey, table, seed) {
       }
     })();
     return () => { cancelled = true; };
-  }, [table]);
+  }, [table, reloadKey]);
   useEffect(() => {
     if (!syncEnabled || !booted.current) { booted.current = true; return; }
     const timer = setTimeout(() => { syncTable(table, items).catch(() => {}); }, 700);
     return () => clearTimeout(timer);
   }, [items, syncEnabled, table]);
-  return [items, setItems, ready];
+  return [items, setItems, ready, reload];
 }
 
 const DAY_PARTS = {
@@ -792,8 +806,27 @@ function MainApp({ session, onLogout, onSessionUpdate, language, setLanguage }) 
   const [reserves, setReserves] = useCloudState('tedx-hub-v2-reserves', 'reserve_volunteers', reserveVolunteers);
   const [pointRules, setPointRules] = useState([]);
   useEffect(() => { let alive = true; fetchTable('points_rules').then(rows => { if (alive) setPointRules(rows || []); }).catch(() => {}); return () => { alive = false; }; }, []);
-  const [events, setEvents] = useCloudState('tedx-hub-v2-events', 'events', []);
-  const [signups, setSignups] = useCloudState('tedx-hub-v2-event-signups', 'event_signups', []);
+  const [events, setEvents, , reloadEvents] = useCloudState('tedx-hub-v2-events', 'events', []);
+  const [signups, setSignups, , reloadSignups] = useCloudState('tedx-hub-v2-event-signups', 'event_signups', []);
+
+  // 回到页面时刷新活动与报名，避免看到已删除的旧数据（15 秒内不重复拉取）。
+  useEffect(() => {
+    let last = 0;
+    const refresh = () => {
+      if (document.visibilityState === 'hidden') return;
+      const now = Date.now();
+      if (now - last < 15000) return;
+      last = now;
+      reloadEvents();
+      reloadSignups();
+    };
+    document.addEventListener('visibilitychange', refresh);
+    window.addEventListener('focus', refresh);
+    return () => {
+      document.removeEventListener('visibilitychange', refresh);
+      window.removeEventListener('focus', refresh);
+    };
+  }, [reloadEvents, reloadSignups]);
   const [modal, setModal] = useState(null);
   const [toast, setToast] = useState('');
   const [search, setSearch] = useState('');
@@ -1088,7 +1121,7 @@ function MainApp({ session, onLogout, onSessionUpdate, language, setLanguage }) 
     case 'tasks': content = <TasksPage tasks={tasks} setTasks={setTasks} teams={teams} members={activeMembers} creditPoints={creditTaskPoints} {...shared} />; break;
     case 'teams': content = <TeamsPage teams={teamView} members={activeMembers} {...shared} />; break;
     case 'members': content = <MembersPage members={members} setMembers={setMembers} teams={teams} reserves={reserves} setReserves={setReserves} transactions={transactions} tasks={tasks} {...shared} />; break;
-    case 'events': content = <EventsPage events={events} setEvents={setEvents} signups={signups} setSignups={setSignups} members={activeMembers} myMember={myMember} role={role} session={session} isEn={isEn} notify={notify} logAudit={(action, target, detail) => logAudit(session, action, target, detail)} />; break;
+    case 'events': content = <EventsPage events={events} setEvents={setEvents} signups={signups} setSignups={setSignups} reload={reloadSignups} members={activeMembers} myMember={myMember} role={role} session={session} isEn={isEn} notify={notify} logAudit={(action, target, detail) => logAudit(session, action, target, detail)} />; break;
     case 'myPoints': content = <MyPointsPage transactions={transactions} tasks={tasks} teams={teams} member={myMember} ready={transactionsReady} {...shared} />; break;
     case 'pointsManagement': content = <PointsManagement transactions={transactions} setTransactions={setTransactions} members={activeMembersWithPoints} isAdmin={role === 'admin'} {...shared} />; break;
     case 'analytics': content = <AnalyticsPage teams={teamView} monthlyTrend={monthlyTrend} transactions={transactions} tasks={tasks} members={activeMembers} {...shared} />; break;

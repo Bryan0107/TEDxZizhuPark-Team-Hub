@@ -88,7 +88,7 @@ function InvitePicker({ members = [], value = [], onChange, isEn }) {
   </div>;
 }
 
-export function EventsPage({ events, setEvents, signups, setSignups, members = [], myMember, role = 'member', session, isEn, notify, logAudit, rules = [] }) {
+export function EventsPage({ events, setEvents, signups, setSignups, reload, members = [], myMember, role = 'member', session, isEn, notify, logAudit, rules = [] }) {
   const canManage = role === 'admin' || role === 'leader';
   const [creating, setCreating] = useState(false);
   const [detail, setDetail] = useState(null);
@@ -203,10 +203,14 @@ export function EventsPage({ events, setEvents, signups, setSignups, members = [
   };
 
   const stats = useMemo(() => {
-    const active = events.filter(e => e.status !== '已结束').length;
-    const signed = signups.filter(s => s.status !== '已取消').length;
-    const checked = signups.filter(s => s.status === '已签到').length;
-    return { active, signed, checked };
+    // 只统计仍然存在的活动的报名，避免已删除活动留下孤儿记录被算进去。
+    const ids = new Set(events.map(e => e.id));
+    const relevant = signups.filter(s => ids.has(s.event_id));
+    return {
+      active: events.filter(e => e.status !== '已结束').length,
+      signed: relevant.filter(s => s.status !== '已取消').length,
+      checked: relevant.filter(s => s.status === '已签到').length,
+    };
   }, [events, signups]);
 
   const seriesInfo = event => {
@@ -249,11 +253,16 @@ export function EventsPage({ events, setEvents, signups, setSignups, members = [
   const removeEvent = async event => {
     if (role !== 'admin') return;
     try {
+      // 先删该活动的报名/邀请记录，避免留下孤儿数据把统计撑高。
+      const related = signups.filter(s => s.event_id === event.id);
+      await Promise.allSettled(related.map(s => removeRow('event_signups', s.id)));
       await removeRow('events', event.id);
       setEvents(prev => prev.filter(e => e.id !== event.id));
+      if (related.length) setSignups(prev => prev.filter(s => s.event_id !== event.id));
       logAudit?.('删除活动', event.title, `${event.event_date || ''}${event.meeting_code ? ` · 会议 ${event.meeting_code}` : ''}`);
       notify(L(isEn, '活动已删除', 'Event deleted'));
       setDetail(null);
+      reload?.();
     } catch (err) {
       notify(L(isEn, '删除失败，请重试', 'Failed to delete'));
     }
