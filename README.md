@@ -58,6 +58,7 @@ VITE_APPWRITE_PROJECT_ID=6af1211f00086491c07c
 
 ## 文档
 
+- [团队内部使用介绍](docs/TEAM-HUB-INTRO.md)
 - [产品需求文档（PRD V1.0）](docs/PRD.md)
 - [十周年历史资料研究](docs/anniversary-research.md)
 - [生产模式与运维手册](docs/OPERATIONS.md)
