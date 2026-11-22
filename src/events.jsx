@@ -11,6 +11,7 @@ import {
 import { fetchTable, saveRow, removeRow } from './api';
 import { buildIcs, downloadIcs, expandOccurrences, RECURRENCE_LABELS, RECURRENCE_LABELS_EN } from './ics';
 import { computeRulePoints } from './rules';
+import { notifyPerson } from './inbox';
 
 const L = (isEn, zh, en) => (isEn ? en : zh);
 const todayISO = () => new Date().toISOString().slice(0, 10);
@@ -145,6 +146,16 @@ export function EventsPage({ events, setEvents, signups, setSignups, reload, mem
         const settled = await Promise.allSettled(invites.map(item => saveRow('event_signups', item)));
         const saved = invites.filter((_, i) => settled[i].status === 'fulfilled');
         if (saved.length) setSignups(prev => [...saved, ...prev]);
+        const byName2 = new Map(members.map(m => [m.name, m]));
+        invited.forEach(name => notifyPerson({
+          member: name,
+          email: byName2.get(name)?.email || '',
+          type: 'event',
+          title: `你被邀请参加「${row.title}」`,
+          body: `${row.event_date || ''} ${row.event_time || ''}${row.location ? ` · ${row.location}` : ''}，无需报名，现场扫码签到即可`,
+          link: '/events',
+          fields: [['活动', row.title], ['时间', `${row.event_date || ''} ${row.event_time || ''}`], ['地点', row.meeting_provider && row.meeting_provider !== '线下' ? row.meeting_provider : (row.location || '—')]],
+        }));
         logAudit?.('邀请成员', row.title, `${invited.length} 人 × ${rows.length} 场`);
       }
 
@@ -242,6 +253,13 @@ export function EventsPage({ events, setEvents, signups, setSignups, reload, mem
       const settled = await Promise.allSettled(rows.map(item => saveRow('event_signups', item)));
       const saved = rows.filter((_, i) => settled[i].status === 'fulfilled');
       setSignups(prev => [...saved, ...prev]);
+      toAdd.forEach(name => notifyPerson({
+        member: name, email: byName.get(name)?.email || '', type: 'event',
+        title: `你被邀请参加「${inviteFor.title}」`,
+        body: `${inviteFor.event_date || ''} ${inviteFor.event_time || ''}，无需报名，现场扫码签到即可`,
+        link: '/events',
+        fields: [['活动', inviteFor.title], ['时间', `${inviteFor.event_date || ''} ${inviteFor.event_time || ''}`]],
+      }));
       logAudit?.('邀请成员', inviteFor.title, `${toAdd.length} 人`);
       notify(L(isEn, `已邀请 ${saved.length} 人`, `${saved.length} invitees added`));
       setInviteFor(null);

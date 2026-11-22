@@ -1,7 +1,7 @@
 import React, { useContext, useCallback, useEffect, useMemo, useRef, useState, lazy, Suspense } from 'react';
 import {
   LayoutDashboard, Coins, FileText, CheckSquare, UsersRound, UserRound,
-  BarChart3, Settings, Search, Bell, ChevronDown, ChevronRight, Plus,
+  BarChart3, Settings, Search, Bell, ChevronDown, ChevronRight, Plus, MessageSquare,
   Download, ArrowUpRight, ArrowDownRight, CalendarDays, Clock3, CircleCheck,
   CircleAlert, MoreHorizontal, Menu, X, Target, TrendingUp, Sparkles,
   ClipboardCheck, Send, Save, Filter, List, LayoutGrid, Paperclip, Link2,
@@ -19,11 +19,15 @@ const Charts = {
   TeamWorkloadChart: lazy(() => import('./charts').then(m => ({ default: m.TeamWorkloadChart }))),
 };
 import { teams as initialTeams, members as initialMembers, initialTasks, initialReports, pointTransactions, reserveVolunteers } from './data';
-import { fetchTable, syncTable, fetchSettings, saveSettings, fetchAppSetting, saveAppSetting, removeRow, pingCloud, setAppwriteSession, APPWRITE_ENDPOINT, APPWRITE_PROJECT, DB } from './api';
+import { fetchTable, syncTable, saveRow, fetchSettings, saveSettings, fetchAppSetting, saveAppSetting, removeRow, pingCloud, setAppwriteSession, APPWRITE_ENDPOINT, APPWRITE_PROJECT, DB } from './api';
 import HallOfHonor, { HallAdmin } from './hall';
 import { EventsPage, CheckInPage } from './events';
 import { CsvImportPanel, AuditPanel } from './admin';
 import Changelog from './Changelog';
+import { notifyPerson } from './inbox';
+import { AppealSheet, MyAppeals, AppealsQueue, APPEAL_HANDLER } from './appeals';
+import YearReport from './YearReport';
+import FeaturePoll from './Poll';
 import { computeRulePoints, TASK_ACTION } from './rules';
 import { logAudit } from './audit';
 import './hall.css';
@@ -64,6 +68,7 @@ const dictionaries = {
     membersTitle: '成员管理', membersSubtitle: '认识每一位共同创造的人',
     pointsManagementTitle: '积分管理', pointsManagementSubtitle: '让贡献被量化、被认可',
     analyticsTitle: '数据分析', analyticsSubtitle: '从数据中理解组织运行状态',
+    updatesTitle: '更新说明', updatesSubtitle: '每次上线做了什么，以及下一批想做什么',
     settingsTitle: '系统设置', settingsSubtitle: '管理年度、规则与偏好',
     hallAdminTitle: '纪念馆管理', hallAdminSubtitle: '维护历届主题、资料来源与公开授权', hallGroup: '十周年', hallHome: '纪念馆首页', hallAdminNav: '纪念馆管理',
     year2026: '2026 年度', searchPlaceholder: '搜索成员、任务或团队…', newTask: '新建任务',
@@ -130,6 +135,7 @@ const dictionaries = {
     membersTitle: 'Members', membersSubtitle: 'Meet the people creating together',
     pointsManagementTitle: 'Points Management', pointsManagementSubtitle: 'Make contributions measurable and recognized',
     analyticsTitle: 'Analytics', analyticsSubtitle: 'Understand how the organization runs through data',
+    updatesTitle: 'What’s new', updatesSubtitle: 'Every release, plus what we should build next',
     settingsTitle: 'Settings', settingsSubtitle: 'Manage year, rules, and preferences',
     hallAdminTitle: 'Hall of Honor Admin', hallAdminSubtitle: 'Maintain editions, sources and publication consent', hallGroup: 'Anniversary', hallHome: 'Hall of Honor', hallAdminNav: 'Hall Admin',
     year2026: 'Year 2026', searchPlaceholder: 'Search members, tasks, or teams…', newTask: 'New Task',
@@ -217,6 +223,7 @@ const PAGE_PATHS = {
   pointsManagement: '/points',
   analytics: '/analytics',
   events: '/events',
+  updates: '/updates',
   settings: '/settings',
   hallAdmin: '/hall-admin',
 };
@@ -230,9 +237,9 @@ function pageFromPath(pathname = window.location.pathname) {
 }
 
 const ROLE_PAGES = {
-  admin: ['dashboard', 'myPoints', 'reports', 'tasks', 'events', 'teams', 'members', 'pointsManagement', 'analytics', 'settings', 'hallAdmin'],
-  leader: ['dashboard', 'myPoints', 'reports', 'tasks', 'events', 'teams', 'members', 'pointsManagement', 'analytics', 'settings'],
-  member: ['dashboard', 'myPoints', 'events', 'teams', 'settings'],
+  admin: ['dashboard', 'myPoints', 'reports', 'tasks', 'events', 'teams', 'members', 'pointsManagement', 'analytics', 'updates', 'settings', 'hallAdmin'],
+  leader: ['dashboard', 'myPoints', 'reports', 'tasks', 'events', 'teams', 'members', 'pointsManagement', 'analytics', 'updates', 'settings'],
+  member: ['dashboard', 'myPoints', 'events', 'teams', 'updates', 'settings'],
 };
 
 const getPageMeta = t => ({
@@ -245,6 +252,7 @@ const getPageMeta = t => ({
   members: [t('membersTitle'), t('membersSubtitle')],
   pointsManagement: [t('pointsManagementTitle'), t('pointsManagementSubtitle')],
   analytics: [t('analyticsTitle'), t('analyticsSubtitle')],
+  updates: [t('updatesTitle'), t('updatesSubtitle')],
   settings: [t('settingsTitle'), t('settingsSubtitle')],
   hallAdmin: [t('hallAdminTitle'), t('hallAdminSubtitle')],
 });
@@ -807,6 +815,9 @@ function MainApp({ session, onLogout, onSessionUpdate, language, setLanguage }) 
   const [reserves, setReserves] = useCloudState('tedx-hub-v2-reserves', 'reserve_volunteers', reserveVolunteers);
   const [pointRules, setPointRules] = useState([]);
   useEffect(() => { let alive = true; fetchTable('points_rules').then(rows => { if (alive) setPointRules(rows || []); }).catch(() => {}); return () => { alive = false; }; }, []);
+  const [inbox, setInbox, , reloadInbox] = useCloudState('tedx-hub-v2-inbox', 'inbox_messages', []);
+  const [appeals, setAppeals, , reloadAppeals] = useCloudState('tedx-hub-v2-appeals', 'point_appeals', []);
+  const [featureVotes, setFeatureVotes, , reloadVotes] = useCloudState('tedx-hub-v2-votes', 'feature_votes', []);
   const [events, setEvents, , reloadEvents] = useCloudState('tedx-hub-v2-events', 'events', []);
   const [signups, setSignups, , reloadSignups] = useCloudState('tedx-hub-v2-event-signups', 'event_signups', []);
 
@@ -820,6 +831,9 @@ function MainApp({ session, onLogout, onSessionUpdate, language, setLanguage }) 
       last = now;
       reloadEvents();
       reloadSignups();
+      reloadInbox();
+      reloadAppeals();
+      reloadVotes();
     };
     document.addEventListener('visibilitychange', refresh);
     window.addEventListener('focus', refresh);
@@ -827,7 +841,7 @@ function MainApp({ session, onLogout, onSessionUpdate, language, setLanguage }) 
       document.removeEventListener('visibilitychange', refresh);
       window.removeEventListener('focus', refresh);
     };
-  }, [reloadEvents, reloadSignups]);
+  }, [reloadEvents, reloadSignups, reloadInbox, reloadAppeals, reloadVotes]);
   const [modal, setModal] = useState(null);
   const [toast, setToast] = useState('');
   const [search, setSearch] = useState('');
@@ -838,6 +852,7 @@ function MainApp({ session, onLogout, onSessionUpdate, language, setLanguage }) 
   const [orgSettings, setOrgSettings] = useState({ zh: '', en: '' });
   const role = session?.prefs?.role || 'member';
   const isEn = language === 'en';
+
   const t = key => dictionaries[language]?.[key] ?? dictionaries.zh[key] ?? key;
   const displayName = session?.prefs?.displayName || session?.name || '';
   const personalTemplate = isEn
@@ -904,6 +919,23 @@ function MainApp({ session, onLogout, onSessionUpdate, language, setLanguage }) 
   const teamView = useMemo(() => enrichTeams({ teams, members, tasks, reports, transactions }), [teams, members, tasks, reports, transactions]);
   const monthlyTrend = useMemo(() => buildMonthlyTrend({ tasks, reports, transactions, isEn }), [tasks, reports, transactions, isEn]);
   const notifications = useMemo(() => buildNotifications({ reports, transactions, members, tasks, isEn }), [reports, transactions, members, tasks, isEn]);
+
+  const inboxName = myMember?.name || session?.prefs?.displayName || session?.name || '';
+  const myInbox = useMemo(() => (inbox || [])
+    .filter(m => m.member === inboxName)
+    .sort((a, b) => String(b.created || '').localeCompare(String(a.created || ''))), [inbox, inboxName]);
+  const unreadCount = myInbox.filter(m => !m.is_read).length;
+  const markInboxRead = async msg => {
+    if (msg.is_read) return;
+    setInbox(prev => prev.map(m => (m.id === msg.id ? { ...m, is_read: true } : m)));
+    try { await saveRow('inbox_messages', { ...msg, is_read: true }); } catch { /* ignore */ }
+  };
+  const markAllInboxRead = async () => {
+    const unread = myInbox.filter(m => !m.is_read);
+    if (!unread.length) return;
+    setInbox(prev => prev.map(m => (m.member === inboxName ? { ...m, is_read: true } : m)));
+    await Promise.allSettled(unread.map(m => saveRow('inbox_messages', { ...m, is_read: true })));
+  };
   const reloadCloud = async () => {
     try {
       const [freshMembers, freshTeams] = await Promise.all([fetchTable('members'), fetchTable('teams')]);
@@ -939,6 +971,66 @@ function MainApp({ session, onLogout, onSessionUpdate, language, setLanguage }) 
   };
 
   /** 任务积分入账：按任务 id 生成唯一流水，重复调用不会重复记账。 */
+  const voteFeature = async option => {
+    const voter = myMember?.name || session?.name || '';
+    if (!voter) { notify('未找到你的成员档案'); return; }
+    const existing = featureVotes.find(v => v.voter === voter);
+    const row = {
+      id: existing?.id || `vote_${Date.now().toString(36)}`,
+      voter,
+      option_key: option.key,
+      option_label: option.zh,
+      created: new Date().toISOString().replace('T', ' ').slice(0, 16),
+    };
+    try {
+      await saveRow('feature_votes', row);
+      setFeatureVotes(prev => (existing ? prev.map(v => (v.id === row.id ? row : v)) : [row, ...prev]));
+      notify(existing ? '已更新你的投票' : '已记录你的选择，谢谢反馈');
+    } catch {
+      notify('投票失败，请重试');
+    }
+  };
+
+  const submitAppeal = async payload => {
+    try {
+      await saveRow('point_appeals', payload);
+      setAppeals(prev => [payload, ...prev]);
+      notifyPerson({
+        member: APPEAL_HANDLER, type: 'appeal',
+        title: `${payload.member} 提交了积分申诉`,
+        body: `${payload.tx_source}（${payload.points > 0 ? '+' : ''}${payload.points} 分）· ${payload.reason}`,
+        link: '/pointsManagement',
+        fields: [['成员', payload.member], ['流水', payload.tx_source], ['积分', payload.points], ['说明', payload.reason]],
+      });
+      logAudit(session, '提交积分申诉', payload.member, payload.tx_source);
+      notify(`申诉已提交，处理人：${APPEAL_HANDLER}`);
+      return true;
+    } catch (err) {
+      console.warn('[appeal] 提交失败', err);
+      notify(`申诉提交失败：${String(err?.message || err).slice(0, 60)}`);
+      return false;
+    }
+  };
+
+  const resolveAppeal = async (appeal, status, reply) => {
+    const patch = { ...appeal, status, reply: reply || '', handler: APPEAL_HANDLER, updated: new Date().toISOString().replace('T', ' ').slice(0, 16) };
+    try {
+      await saveRow('point_appeals', patch);
+      setAppeals(prev => prev.map(a => (a.id === appeal.id ? patch : a)));
+      notifyPerson({
+        member: appeal.member, type: 'appeal',
+        title: `积分申诉${status}`,
+        body: reply ? `处理人 ${APPEAL_HANDLER}：${reply}` : `处理人：${APPEAL_HANDLER}`,
+        link: '/myPoints',
+        fields: [['流水', appeal.tx_source], ['积分', appeal.points], ['结果', status], ['回复', reply || '—']],
+      });
+      logAudit(session, '处理积分申诉', appeal.member, `${status}${reply ? ` · ${reply}` : ''}`);
+      notify(`申诉处理完成：${status}`);
+    } catch {
+      notify('处理失败，请重试');
+    }
+  };
+
   const creditTaskPoints = (task, { silent = false } = {}) => {
     const ownerMember = resolveMember(activeMembers, task?.owner) || resolveMember(members, task?.owner);
     const owner = ownerMember?.name || task?.owner || '';
@@ -969,6 +1061,15 @@ function MainApp({ session, onLogout, onSessionUpdate, language, setLanguage }) 
       year: now.getFullYear(),
       month: now.getMonth() + 1,
     }, ...prev]);
+    notifyPerson({
+      member: owner,
+      email: ownerMember?.email || '',
+      type: 'points',
+      title: status === '待审核' ? `新增 ${points} 分待审核` : `获得 ${points} 积分`,
+      body: `任务「${task.title || ''}」${status === '待审核' ? '已生成积分记录，等待管理员确认' : '已完成，积分已入账'}`,
+      link: '/myPoints',
+      fields: [['任务', task.title || '—'], ['积分', `+${points}`], ['状态', status]],
+    });
     if (!silent) notify(status === '待审核' ? `已按规则生成 ${points} 分待审核记录，请管理员确认` : `已为 ${owner} 记入 ${points} 分`);
     // 入账即通过飞书机器人通知（失败不影响业务）
     pushFeishu('points.created', {
@@ -1121,10 +1222,11 @@ function MainApp({ session, onLogout, onSessionUpdate, language, setLanguage }) 
     case 'reports': content = <ReportsPage reports={reports} setReports={setReports} teams={teamView} myTeam={myMember?.team || ''} {...shared} />; break;
     case 'tasks': content = <TasksPage tasks={tasks} setTasks={setTasks} teams={teams} members={activeMembers} creditPoints={creditTaskPoints} {...shared} />; break;
     case 'teams': content = <TeamsPage teams={teamView} members={activeMembers} {...shared} />; break;
-    case 'members': content = <MembersPage members={members} setMembers={setMembers} teams={teams} reserves={reserves} setReserves={setReserves} transactions={transactions} tasks={tasks} {...shared} />; break;
+    case 'members': content = <MembersPage members={members} setMembers={setMembers} teams={teams} reserves={reserves} setReserves={setReserves} transactions={transactions} tasks={tasks} reports={reports} signups={signups} {...shared} />; break;
     case 'events': content = <EventsPage events={events} setEvents={setEvents} signups={signups} setSignups={setSignups} reload={reloadSignups} members={activeMembers} myMember={myMember} role={role} session={session} isEn={isEn} notify={notify} logAudit={(action, target, detail) => logAudit(session, action, target, detail)} />; break;
-    case 'myPoints': content = <MyPointsPage transactions={transactions} tasks={tasks} teams={teams} member={myMember} ready={transactionsReady} {...shared} />; break;
-    case 'pointsManagement': content = <PointsManagement transactions={transactions} setTransactions={setTransactions} members={activeMembersWithPoints} isAdmin={role === 'admin'} {...shared} />; break;
+    case 'updates': content = <UpdatesPage members={members} isEn={isEn} t={t} votes={featureVotes} voter={myMember?.name || session?.name || ''} onVote={voteFeature} />; break;
+    case 'myPoints': content = <MyPointsPage transactions={transactions} tasks={tasks} teams={teams} member={myMember} ready={transactionsReady} appeals={appeals} onAppeal={submitAppeal} reports={reports} signups={signups} {...shared} />; break;
+    case 'pointsManagement': content = <PointsManagement transactions={transactions} setTransactions={setTransactions} members={activeMembersWithPoints} isAdmin={role === 'admin'} appeals={appeals} onResolveAppeal={resolveAppeal} {...shared} />; break;
     case 'analytics': content = <AnalyticsPage teams={teamView} monthlyTrend={monthlyTrend} transactions={transactions} tasks={tasks} members={activeMembers} {...shared} />; break;
     case 'hallAdmin': content = <HallAdmin notify={notify} lang={language} session={session} />; break;
     case 'settings': content = <SettingsPage {...shared} notifications={notifications} myTeam={myMember?.team || ''} session={session} role={role} orgSettings={orgSettings} onOrgSettings={setOrgSettings} onSessionUpdate={onSessionUpdate} language={language} teams={teamView} members={members} tasks={tasks} reports={reports} transactions={transactions} reserves={reserves} />; break;
@@ -1156,6 +1258,7 @@ function MainApp({ session, onLogout, onSessionUpdate, language, setLanguage }) 
         })}</div>)}
       </nav>
       <div className="sidebar-bottom">
+        <button className={`nav-item ${activePage === 'updates' ? 'active' : ''}`} onClick={() => navigate('updates')}><History size={16} strokeWidth={1.6} /><span>{t('updatesTitle')}</span></button>
         <button className={`nav-item ${activePage === 'settings' ? 'active' : ''}`} onClick={() => navigate('settings')}><Settings size={16} strokeWidth={1.6} /><span>{t('settings')}</span></button>
         <div className="side-help"><span><HelpCircle size={18} /></span><div><strong>{t('helpTitle')}</strong><p>{t('helpText')}</p></div><ChevronRight size={15} /></div>
         <div className="profile-wrap">
@@ -1167,11 +1270,40 @@ function MainApp({ session, onLogout, onSessionUpdate, language, setLanguage }) 
 
     <div className="main-shell">
       <header className="topbar">
-        <div className="topbar-left"><button className="mobile-menu icon-button" onClick={() => setSidebarOpen(true)}><Menu size={21} /></button><span className="breadcrumb-root">TEDx 紫竹</span><ChevronRight size={14} /><strong>{pageMetaForRole[activePage][0]}</strong></div>
+        <div className="topbar-left"><button className="mobile-menu icon-button" onClick={() => setSidebarOpen(true)}><Menu size={21} /></button><span className="breadcrumb-root">TEDx 紫竹</span><ChevronRight size={14} /><strong>{(pageMetaForRole[activePage] || pageMeta[activePage] || ['', ''])[0]}</strong></div>
         <div className="topbar-right">
           <div className="global-search"><Search size={17} /><input value={search} onChange={e => setSearch(e.target.value)} onFocus={() => setSearchFocus(true)} placeholder={t('searchPlaceholder')} /><kbd>⌘ K</kbd>{searchFocus && search && <div className="search-results">{searchResults.length ? searchResults.map((r, i) => <button key={i} onClick={() => { r.action(); setSearch(''); setSearchFocus(false); }}><span>{r.type}</span><div><strong>{r.title}</strong><small>{r.subtitle}</small></div><ChevronRight size={15} /></button>) : <div className="search-empty">{isEn ? `No results for “${search}”` : `没有找到“${search}”相关内容`}</div>}</div>}</div>
           <div className="language-switcher"><button className="language-button" onClick={() => { setLanguageOpen(!languageOpen); setNotificationsOpen(false); }}><Globe2 size={16} /><span>{isEn ? 'English' : '中文'}</span><ChevronDown size={13} /></button>{languageOpen && <div className="language-menu">{[['zh', '中文', '简体中文'], ['en', 'English', 'English interface']].map(([key, label, hint]) => <button key={key} onClick={() => { setLanguage(key); setLanguageOpen(false); notify(key === 'en' ? 'Interface language updated' : '界面语言已切换'); }}><div><strong>{label}</strong><small>{hint}</small></div>{language === key && <Check size={15} />}</button>)}</div>}</div>
-          <div className="notification-wrap"><button className="icon-button notification-button" onClick={() => { setNotificationsOpen(!notificationsOpen); setLanguageOpen(false); }}><Bell size={19} />{notifications.length > 0 && <i />}</button>{notificationsOpen && <div className="notifications-panel"><div className="notifications-title"><strong>{t('notifications')}</strong><button onClick={() => { setNotificationsOpen(false); notify(isEn ? 'All notifications marked as read' : '已将所有通知标为已读'); }}>{t('markAllRead')}</button></div>{notifications.length ? notifications.map((item, i) => <div className="notification-item" key={i}><span><item.icon size={17} /></span><div><strong>{item.title}</strong><p>{item.detail}</p>{item.time ? <small>{item.time}</small> : null}</div></div>) : <div className="search-empty">{isEn ? 'No notifications — all caught up.' : '暂无通知，一切正常。'}</div>}<button className="all-notifications" onClick={() => { setNotificationsOpen(false); notify(isEn ? 'All in-app notifications are shown' : '已展示全部站内通知'); }}>{t('viewAllNotifications')}<ChevronRight size={14} /></button></div>}</div>
+          <div className="notification-wrap">
+            <button className="icon-button notification-button" onClick={() => { setNotificationsOpen(!notificationsOpen); setLanguageOpen(false); }}>
+              <Bell size={19} />
+              {unreadCount > 0 && <i className="notification-dot">{unreadCount > 9 ? '9+' : unreadCount}</i>}
+            </button>
+            {notificationsOpen && <div className="notifications-panel">
+              <div className="notifications-title">
+                <strong>{t('notifications')}{unreadCount > 0 ? ` · ${unreadCount}` : ''}</strong>
+                <button onClick={markAllInboxRead} disabled={!unreadCount}>{t('markAllRead')}</button>
+              </div>
+              {myInbox.length ? myInbox.slice(0, 12).map(msg => <button
+                className={`notification-item ${msg.is_read ? '' : 'unread'}`}
+                key={msg.id}
+                onClick={() => {
+                  markInboxRead(msg);
+                  const target = String(msg.link || '').replace(/^\/+/, '');
+                  if (target) { navigate(target); setNotificationsOpen(false); }
+                }}
+              >
+                <span>{msg.type === 'points' ? <Coins size={17} /> : msg.type === 'event' ? <CalendarDays size={17} /> : msg.type === 'task' ? <CheckSquare size={17} /> : msg.type === 'appeal' ? <MessageSquare size={17} /> : <Bell size={17} />}</span>
+                <div>
+                  <strong>{msg.title}</strong>
+                  {msg.body ? <p>{msg.body}</p> : null}
+                  <small>{msg.created}</small>
+                </div>
+                {msg.is_read ? null : <i className="inbox-unread-dot" />}
+              </button>) : <div className="search-empty">{isEn ? 'No notifications — all caught up.' : '暂无通知，一切正常。'}</div>}
+              <button className="all-notifications" onClick={() => { setNotificationsOpen(false); notify(isEn ? 'You are all caught up' : '已展示全部站内通知'); }}>{t('viewAllNotifications')}<ChevronRight size={14} /></button>
+            </div>}
+          </div>
           <Button icon={Plus} onClick={() => setModal({ type: 'newTask' })}>{t('newTask')}</Button>
         </div>
       </header>
@@ -1189,8 +1321,13 @@ function MainApp({ session, onLogout, onSessionUpdate, language, setLanguage }) 
         ? `Task created${creditedLabel}`
         : `新任务已创建${credited === '待审核' ? `，${created.points} 分待审核` : (credited ? `，${created.points} 分已记入 ${created.owner}` : '并通知负责人')}`);
       notifyFeishu('event.created', { title: '新建活动/任务', summary: 'Team Hub 中创建了新的活动或任务。', fields: [['任务', task.title || '—'], ['所属团队', task.team || '—'], ['负责人', task.owner || '—'], ['截止日期', task.due || '—']] });
-      // 负责人单聊提醒（未绑定飞书账号时服务端自动跳过，不影响创建）
-      if (task.owner) fetch('/api/notify', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ action: 'task-assigned', task: created }) }).catch(() => {});
+      // 站内通知 + 负责人飞书单聊（未绑定飞书时服务端自动跳过，不影响创建）
+      if (created.owner) notifyPerson({
+        member: created.owner, type: 'task', title: '你有一个新任务',
+        body: `${created.title}${created.due ? ` · 截止 ${created.due}` : ''}`,
+        link: '/tasks',
+        fields: [['任务', created.title || '—'], ['团队', created.team || '—'], ['截止', created.due || '—'], ['优先级', created.priority || '普通']],
+      });
     }} />}
     {modal?.type === 'taskDetail' && (() => {
       const liveTask = tasks.find(item => item.id === modal.data.id) || modal.data;
@@ -1651,11 +1788,24 @@ function TeamsPage({ teams, members = [], setModal, navigate, t, isEn }) {
   </div>;
 }
 
-function MembersPage({ members, setMembers, teams = [], reserves, setReserves, setModal, exportCsv, notify, navigate, transactions = [], tasks = [], t, isEn, language }) {
+function MembersPage({ members, setMembers, teams = [], reserves, setReserves, setModal, exportCsv, notify, navigate, transactions = [], tasks = [], reports = [], signups = [], t, isEn, language }) {
   const L = (zh, en) => isEn ? en : zh;
   const [tab, setTab] = useState('active');
   const [query, setQuery] = useState('');
   const [status, setStatus] = useState('全部成员');
+  const [activity, setActivity] = useState('全部');
+  // 活跃度分层：任务完成、活动签到、月报、积分四项加权，只看在编成员。
+  const activityOf = m => {
+    const doneTasks = tasks.filter(t2 => t2.owner === m.name && t2.status === '已完成').length;
+    const checkins = signups.filter(s2 => s2.member_name === m.name && s2.status === '已签到').length;
+    const reps = reports.filter(r => r.team === m.team && r.status !== '未开始').length;
+    const pts = transactions.filter(tx => tx.member === m.name).reduce((sum, tx) => sum + Math.max(Number(tx.points) || 0, 0), 0);
+    const score = doneTasks * 2 + checkins * 2 + reps * 3 + (pts > 0 ? 1 : 0);
+    const hasHistory = doneTasks + checkins + reps + (pts > 0 ? 1 : 0) > 0;
+    // 完全没有数据时不贴「沉睡」标签，避免新人一进来就被判死。
+    const tier = score >= 8 ? '活跃' : score >= 3 ? '一般' : (hasHistory ? '沉睡' : '未记录');
+    return { score, tier };
+  };
   const [reserveQuery, setReserveQuery] = useState('');
   const [availability, setAvailability] = useState('全部');
   // 积分与任务数按真实流水 / 任务实时统计，不再依赖 members 表里的静态列。
@@ -1683,7 +1833,7 @@ function MembersPage({ members, setMembers, teams = [], reserves, setReserves, s
   const statOf = name => statsByName.get(name) || { points: 0, monthPoints: 0, tasks: 0 };
   const activeMembers = members.filter(m => m.member_status === 'active');
   const alumniMembers = members.filter(m => m.member_status !== 'active');
-  const filtered = activeMembers.filter(m => `${m.name}${m.english || ''}${m.team || ''}`.toLowerCase().includes(query.toLowerCase()) && (status === '全部成员' || m.status === status));
+  const filtered = activeMembers.filter(m => `${m.name}${m.english || ''}${m.team || ''}`.toLowerCase().includes(query.toLowerCase()) && (status === '全部成员' || m.status === status) && (activity === '全部' || activityOf(m).tier === activity));
   const filteredAlumni = alumniMembers.filter(m => `${m.name}${m.english || ''}${m.team || ''}`.toLowerCase().includes(query.toLowerCase()));
   const filteredReserves = reserves.filter(r => `${r.name}${r.english || ''}${r.previous_team || ''}${r.years || ''}`.toLowerCase().includes(reserveQuery.toLowerCase()) && (availability === '全部' || r.availability === availability));
   const memberFilters = [['全部成员', t('allMembers')], ['正常', displayValue('正常', language)]];
@@ -1708,7 +1858,7 @@ function MembersPage({ members, setMembers, teams = [], reserves, setReserves, s
 
     {tab === 'active' ? <>
       <div className="member-insights"><div><strong>{activeMembers.length}</strong><p>{t('memberCount')}</p><small>{L('当前在编名册', 'Current roster')}</small></div><div><strong>{participation}%</strong><p>{t('participationRate')}</p><small>{activeCount} {L('位活跃成员', 'active members')}</small></div><div><strong>{alumniMembers.length}</strong><p>{L('历届成员归档', 'Alumni Archived')}</p><small>{L('已存档至十周年纪念馆', 'Archived in Hall of Honor')}</small></div></div>
-      <div className="card table-card"><div className="table-toolbar"><div className="filter-tabs">{memberFilters.map(([key, label]) => <button className={status === key ? 'active' : ''} onClick={() => setStatus(key)} key={key}>{label}</button>)}</div><div className="toolbar-right"><div className="local-search"><Search size={16} /><input placeholder={t('searchMembers')} value={query} onChange={e => setQuery(e.target.value)} /></div></div></div><div className="table-wrap"><table className="data-table member-table"><thead><tr><th>{t('member')}</th><th>{t('assignedTeam')}</th><th>{t('role')}</th><th>{t('joinedAt')}</th><th>{t('annualTasks')}</th><th>{t('points')}</th><th>{t('participationStatus')}</th><th /></tr></thead><tbody>{filtered.map(m => <tr key={m.id} onClick={() => setModal({ type: 'memberDetail', data: m })}><td><div className="member-cell"><Avatar name={m.name} src={m.avatar} /><div><strong>{m.name}<span>{m.english}</span></strong><small>{m.email}</small></div></div></td><td>{m.team}</td><td><span className={m.role === '组长' ? 'role-tag leader' : 'role-tag'}>{displayValue(m.role, language)}</span></td><td className="muted">{m.joined}</td><td>{statOf(m.name).tasks} {isEn ? 'tasks' : '项'}</td><td><strong className="points-number">{statOf(m.name).points}</strong><span className="table-sub"> {isEn ? 'pts' : '分'}</span><small className="points-month">{isEn ? `This month +${statOf(m.name).monthPoints}` : `本月 +${statOf(m.name).monthPoints}`}</small></td><td><StatusBadge>{m.status}</StatusBadge></td><td><ChevronRight size={16} className="muted" /></td></tr>)}</tbody></table>{!filtered.length && <EmptyState title={isEn ? 'No active members yet' : '暂无在编成员'} description={isEn ? 'Add members to build the curation team roster.' : '点击右上角「添加成员」建立本年度策展团队名册。'} />}</div><div className="table-footer"><span>{isEn ? `${filtered.length} active members` : `显示 ${filtered.length} 位在编成员`}</span></div></div>
+      <div className="card table-card"><div className="table-toolbar"><div className="filter-tabs">{memberFilters.map(([key, label]) => <button className={status === key ? 'active' : ''} onClick={() => setStatus(key)} key={key}>{label}</button>)}<span className="filter-divider" /><div className="activity-tabs">{['全部', '活跃', '一般', '沉睡', '未记录'].map(tier => <button key={tier} className={activity === tier ? 'active' : ''} onClick={() => setActivity(tier)}>{isEn ? ({ 全部: 'All', 活跃: 'Active', 一般: 'Average', 沉睡: 'Dormant', 未记录: 'No data' })[tier] : tier}</button>)}</div></div><div className="toolbar-right"><div className="local-search"><Search size={16} /><input placeholder={t('searchMembers')} value={query} onChange={e => setQuery(e.target.value)} /></div></div></div><div className="table-wrap"><table className="data-table member-table"><thead><tr><th>{t('member')}</th><th>{t('assignedTeam')}</th><th>{t('role')}</th><th>{t('joinedAt')}</th><th>{t('annualTasks')}</th><th>{t('points')}</th><th>{L('活跃度', 'Activity')}</th><th>{t('participationStatus')}</th><th /></tr></thead><tbody>{filtered.map(m => <tr key={m.id} onClick={() => setModal({ type: 'memberDetail', data: m })}><td><div className="member-cell"><Avatar name={m.name} src={m.avatar} /><div><strong>{m.name}<span>{m.english}</span></strong><small>{m.email}</small></div></div></td><td>{m.team}</td><td><span className={m.role === '组长' ? 'role-tag leader' : 'role-tag'}>{displayValue(m.role, language)}</span></td><td className="muted">{m.joined}</td><td>{statOf(m.name).tasks} {isEn ? 'tasks' : '项'}</td><td><strong className="points-number">{statOf(m.name).points}</strong><span className="table-sub"> {isEn ? 'pts' : '分'}</span><small className="points-month">{isEn ? `This month +${statOf(m.name).monthPoints}` : `本月 +${statOf(m.name).monthPoints}`}</small></td><td>{(() => { const a = activityOf(m); const tone = a.tier === '活跃' ? 'green' : a.tier === '一般' ? 'amber' : 'gray'; const en = { 活跃: 'Active', 一般: 'Average', 沉睡: 'Dormant', 未记录: 'No data' }; return <span className={`status-badge ${tone}`} title={isEn ? `activity score ${a.score}` : `活跃分 ${a.score}`}><i />{isEn ? en[a.tier] : a.tier}</span>; })()}</td><td><StatusBadge>{m.status}</StatusBadge></td><td><ChevronRight size={16} className="muted" /></td></tr>)}</tbody></table>{!filtered.length && <EmptyState title={isEn ? 'No active members yet' : '暂无在编成员'} description={isEn ? 'Add members to build the curation team roster.' : '点击右上角「添加成员」建立本年度策展团队名册。'} />}</div><div className="table-footer"><span>{isEn ? `${filtered.length} active members` : `显示 ${filtered.length} 位在编成员`}</span><span>{isEn ? 'Activity = tasks ×2 + check-ins ×2 + reports ×3, ≥8 active / ≥3 average' : '活跃度 = 完成任务×2 + 活动签到×2 + 月报×3，≥8 活跃 / ≥3 一般'}</span></div></div>
     </> : tab === 'alumni' ? <>
       <section className="card reserve-intro"><div className="settings-title"><span><History size={19} /></span><div><h2>{L('历届成员归档', 'Alumni Archive')}</h2><p>{L('过往策展团队成员，已存档至十周年纪念馆', 'Former curation team members, archived in the Hall of Honor')}</p></div></div>
         <p className="greeting-hint"><Info size={15} /><span>{L('这些成员已标记为「历届」，不再计入本年度在编名册、团队编制与积分排名；其历史贡献已永久保存在十周年纪念馆（公开页 /hall-of-honor），不会被删除。', 'These members are marked as alumni — excluded from the active roster, team headcount and points rankings — but their historical contributions are preserved permanently in the Hall of Honor (public page /hall-of-honor).')}</span></p>
@@ -1754,7 +1904,9 @@ function ReserveForm({ teams = [], onClose, onSave, isEn }) {
   </Modal>;
 }
 
-function MyPointsPage({ transactions, tasks, teams, member, navigate, exportCsv, t, isEn, language, ready = true }) {
+function MyPointsPage({ transactions, tasks, teams, member, navigate, exportCsv, t, isEn, language, ready = true, appeals = [], onAppeal, reports = [], signups = [] }) {
+  const [appealTx, setAppealTx] = useState(null);
+  const [reportOpen, setReportOpen] = useState(false);
   // 「我的积分」只统计当前成员自己的流水；按成员档案归一化匹配（同名旧记录也能命中）。
   const mine = useMemo(() => {
     if (!member) return [];
@@ -1791,14 +1943,17 @@ function MyPointsPage({ transactions, tasks, teams, member, navigate, exportCsv,
       return cursor < 100 ? `conic-gradient(${stops.join(',')} , #ececE7 ${cursor}% 100%)` : `conic-gradient(${stops.join(',')})`;
     })()
     : 'conic-gradient(#ecece7 0 100%)';
-  return <div className="page"><PageTitle title={t('myPointsTitle')} subtitle={t('myPointsSubtitle')} actions={<Button variant="secondary" icon={Download} onClick={() => exportCsv(isEn ? 'Personal Point Transactions' : '个人积分流水')}>{t('exportContribution')}</Button>} />
+  return <div className="page"><PageTitle title={t('myPointsTitle')} subtitle={t('myPointsSubtitle')} actions={<><Button variant="secondary" icon={Award} onClick={() => setReportOpen(true)}>{isEn ? 'Year in review' : '年度报告'}</Button><Button variant="secondary" icon={Download} onClick={() => exportCsv(isEn ? 'Personal Point Transactions' : '个人积分流水')}>{t('exportContribution')}</Button></>} />
     <section className="points-hero"><div className="points-hero-main"><img className="points-hero-logo" src="/assets/logo-white.png" alt="TEDxZizhuPark" /><span>{isEn ? '2026 Annual Points' : '2026 年度累计积分'}</span><div><strong>{ready ? totalPoints : '—'}</strong><small>{isEn ? 'pts' : '分'}</small></div><p><span><ArrowUpRight size={14} />{ready ? (isEn ? `${totalPoints} pts recorded` : `已记录 ${totalPoints} 分`) : (isEn ? 'Loading your records…' : '正在读取你的记录…')}</span>{isEn ? 'Points are a record, not a ranking' : '积分是记录，不是排名'}</p></div><div className="points-hero-stats"><div><span>{isEn ? 'Lifetime Points' : '历史累计积分'}</span><strong>{ready ? totalPoints : '—'}<small>{isEn ? ' pts' : ' 分'}</small></strong></div><div><span>{isEn ? 'Annual Rank' : '年度组织排名'}</span><strong>—<small></small></strong></div><div><span>{isEn ? 'Consecutive Participation' : '连续参与'}</span><strong>—<small></small></strong></div></div></section>
     <div className="points-content-grid"><div className="card points-breakdown"><div className="card-header"><div><h2>{t('pointsStructure')}</h2><p>{t('pointsStructureSub')}</p></div></div><div className="points-donut-row"><div className="points-donut" style={{ background: donutBg }}><div><strong>{ready ? totalPoints : '—'}</strong><span>{isEn ? 'Total Points' : '总积分'}</span></div></div><div className="points-legend">{legend.map(item => <div key={item.zh}><i style={{ background: item.color }} /><span>{isEn ? item.en : item.zh}</span><strong>{item.value} {isEn ? 'pts' : '分'}</strong><small>{item.percent}%</small></div>)}</div></div><div className="points-quote"><Sparkles size={18} /><p>{!ready ? (isEn ? 'Loading…' : '正在读取…') : totalPoints ? (isEn ? 'Points record your contribution, not your total value.' : '积分是组织对你付出的记录，而不是对你价值的唯一评价。') : (isEn ? 'No points recorded yet — they appear here once a report or task is reviewed.' : '还没有积分记录。任务完成或月报审核通过后，积分会自动记到这里。')}</p></div></div><div className="card contribution-card"><div className="card-header"><div><h2>{t('myAnnualContribution')}</h2><p>{t('myAnnualContributionSub')}</p></div></div><div className="contribution-grid"><div><CheckSquare size={18} /><strong>{myTasks.length}</strong><span>{t('completedTasks')}</span></div><div><CalendarDays size={18} /><strong>{mine.length}</strong><span>{t('attendedActivities')}</span></div><div><UsersRound size={18} /><strong>{new Set(mine.map(tx => tx.team).filter(Boolean)).size}</strong><span>{t('crossTeamCollaboration')}</span></div><div><Star size={18} /><strong>{byType['特别贡献'] || 0}</strong><span>{t('specialContributions')}</span></div></div><button className="full-secondary-button" onClick={() => navigate('analytics')}>{t('viewContributionReport')}<ArrowUpRight size={15} /></button></div></div>
-    <div className="card table-card"><div className="card-header padded"><div><h2>{t('pointsDetails')}</h2><p>{t('pointsDetailsSub')}</p></div><span className="static-year">{t('year2026')}</span></div><div className="table-wrap"><table className="data-table"><thead><tr><th>{t('pointsSource')}</th><th>{t('pointsType')}</th><th>{t('assignedTeam')}</th><th>{t('time')}</th><th>{t('reviewStatus')}</th><th>{t('points')}</th></tr></thead><tbody>{myTx.map(tx => <tr key={tx.id}><td><strong>{tx.source}</strong><small className="transaction-id">{tx.id}</small></td><td><StatusBadge>{tx.type}</StatusBadge></td><td>{tx.team}</td><td className="muted">{tx.date}</td><td><StatusBadge>{tx.status}</StatusBadge></td><td><strong className={tx.points >= 0 ? 'positive-points' : 'negative-points'}>{tx.points > 0 ? '+' : ''}{tx.points}</strong></td></tr>)}</tbody></table>{ready && !mine.length && <EmptyState icon={Coins} title={isEn ? 'No points yet' : '还没有积分记录'} description={isEn ? 'Points appear here after your task or monthly report is reviewed.' : '完成任务或月报审核通过后，积分流水会显示在这里。'} />}{!ready && <div className="mp-loading">{isEn ? 'Loading your point records…' : '正在读取你的积分记录…'}</div>}</div></div>
+    <div className="card table-card"><div className="card-header padded"><div><h2>{t('pointsDetails')}</h2><p>{t('pointsDetailsSub')}</p></div><span className="static-year">{t('year2026')}</span></div><div className="table-wrap"><table className="data-table"><thead><tr><th>{t('pointsSource')}</th><th>{t('pointsType')}</th><th>{t('assignedTeam')}</th><th>{t('time')}</th><th>{t('reviewStatus')}</th><th>{t('points')}</th><th>{isEn ? 'Appeal' : '申诉'}</th></tr></thead><tbody>{myTx.map(tx => <tr key={tx.id}><td><strong>{tx.source}</strong><small className="transaction-id">{tx.id}</small></td><td><StatusBadge>{tx.type}</StatusBadge></td><td>{tx.team}</td><td className="muted">{tx.date}</td><td><StatusBadge>{tx.status}</StatusBadge></td><td><strong className={tx.points >= 0 ? 'positive-points' : 'negative-points'}>{tx.points > 0 ? '+' : ''}{tx.points}</strong></td><td className="row-actions">{appeals.some(a => a.tx_id === tx.id && a.member === member?.name) ? <span className="muted">{isEn ? 'Submitted' : '已申诉'}</span> : <button onClick={() => setAppealTx(tx)}><MessageSquare size={14} />{isEn ? 'Appeal' : '申诉'}</button>}</td></tr>)}</tbody></table>{ready && !mine.length && <EmptyState icon={Coins} title={isEn ? 'No points yet' : '还没有积分记录'} description={isEn ? 'Points appear here after your task or monthly report is reviewed.' : '完成任务或月报审核通过后，积分流水会显示在这里。'} />}{!ready && <div className="mp-loading">{isEn ? 'Loading your point records…' : '正在读取你的积分记录…'}</div>}</div></div>
+    <MyAppeals appeals={appeals} member={member} isEn={isEn} />
+    {reportOpen && <YearReport member={member} transactions={transactions} tasks={tasks} reports={reports} signups={signups} teams={teams} isEn={isEn} onClose={() => setReportOpen(false)} />}
+    {appealTx && <AppealSheet tx={appealTx} member={member} isEn={isEn} onClose={() => setAppealTx(null)} onSubmit={async payload => { const ok = await onAppeal?.(payload); if (ok) setAppealTx(null); }} />}
   </div>;
 }
 
-function PointsManagement({ transactions, setTransactions, members, setModal, exportCsv, notify, navigate, t, isEn, language, isAdmin = false }) {
+function PointsManagement({ transactions, setTransactions, members, setModal, exportCsv, notify, navigate, t, isEn, language, isAdmin = false, appeals = [], onResolveAppeal }) {
   const [tab, setTab] = useState('积分流水');
   const totalPoints = transactions.reduce((sum, tx) => sum + (Number(tx.points) || 0), 0);
   const pendingList = transactions.filter(tx => tx.status === '待审核');
@@ -1834,6 +1989,7 @@ function PointsManagement({ transactions, setTransactions, members, setModal, ex
   };
   const tabs = [['积分流水', t('pointTransactions')], ['积分规则', t('pointsRules')], ['排行榜', t('leaderboard')]];
   return <div className="page"><PageTitle title={t('pointsManagementTitle')} subtitle={t('pointsManagementSubtitle')} actions={<>{isAdmin && <Button variant="secondary" icon={SlidersHorizontal} onClick={() => navigate('settings')}>{t('ruleSettings')}</Button>}{isAdmin ? <Button icon={Plus} onClick={() => setModal({ type: 'pointsAdjust' })}>{t('adjustPoints')}</Button> : <span className="admin-note">{isEn ? 'View only — only a super admin can adjust points' : '只读视图 · 积分调整与审核仅超级管理员可操作'}</span>}</>} />
+    {isAdmin && <AppealsQueue appeals={appeals} isEn={isEn} onResolve={onResolveAppeal} />}
     {pendingList.length > 0 && <div className="pending-queue">
       <div className="pending-queue-head">
         <h3><Clock3 size={16} />{isEn ? 'Awaiting review' : '待审核积分'} <span>{isEn ? `${pendingList.length} entries · ${pendingPoints} pts` : `${pendingList.length} 条 · 共 ${pendingPoints} 分`}</span></h3>
@@ -1953,6 +2109,14 @@ const EXPORT_KINDS = [
   ['任务清单', '任务清单', 'Task list'],
   ['年度团队数据', '年度团队统计', 'Annual team statistics'],
 ];
+
+function UpdatesPage({ members, isEn, t, votes = [], voter = '', onVote }) {
+  return <div className="page updates-page">
+    <PageTitle title={t('updatesTitle')} subtitle={t('updatesSubtitle')} />
+    <Changelog members={members} isEn={isEn} />
+    <FeaturePoll votes={votes} voter={voter} onVote={onVote} isEn={isEn} />
+  </div>;
+}
 
 function SettingsPage({ notify, t, isEn, language, session, role, myTeam = '', orgSettings, onOrgSettings, onSessionUpdate, exportCsv, teams, members, tasks, reports, transactions, reserves, notifications = [] }) {
   const L = (zh, en) => isEn ? en : zh;
@@ -2075,7 +2239,6 @@ function SettingsPage({ notify, t, isEn, language, session, role, myTeam = '', o
 
   return <div className="page settings-page">
     <PageTitle title={t('settingsTitle')} subtitle={t('settingsSubtitle')} actions={<Button icon={Save} onClick={saveCurrent}>{t('saveChanges')}</Button>} />
-    <Changelog members={members} isEn={isEn} />
     <div className="settings-layout">
       <div className="settings-nav">{tabs.map(([id, label, Icon]) => <button key={id} className={tab === id ? 'active' : ''} onClick={() => setTab(id)}><Icon size={17} />{label}</button>)}</div>
       <div className="settings-content">

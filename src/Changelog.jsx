@@ -12,15 +12,17 @@ export default function Changelog({ members = [], isEn = false }) {
   const [expanded, setExpanded] = useState(false);
   const visible = expanded ? RELEASES : RELEASES.slice(0, 3);
 
-  // 核心贡献者取真实名册：在编的团队负责人 / 组长，去重后最多 8 位。
+  // 核心贡献者固定为产品与开发负责人（其余组长不计入）。
   const contributors = useMemo(() => {
-    const seen = new Map();
-    members.forEach(m => {
-      if ((m.member_status && m.member_status !== 'active') || m.status === '已离开') return;
-      const isLead = m.role === '组长' || /负责人|队长|lead/i.test(String(m.position || ''));
-      if (isLead && !seen.has(m.name)) seen.set(m.name, m);
-    });
-    return [...seen.values()].slice(0, 8);
+    const target = members.find(m => String(m.name || '').replace(/\s+/g, ' ').toLowerCase() === 'bryan fu 付天一')
+      || members.find(m => /bryan/i.test(String(m.name || '')));
+    return [{
+      id: target?.id || 'bryan',
+      name: target?.name || 'Bryan FU 付天一',
+      team: target?.team || 'Team 管理支撑',
+      avatar: target?.avatar || '',
+      role: '组长',
+    }];
   }, [members]);
 
   return <section className="card changelog-card">

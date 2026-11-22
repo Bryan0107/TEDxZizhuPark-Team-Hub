@@ -6,7 +6,7 @@
  * 必须登录；发送失败不影响业务（接口总是返回 200 + status），前端只做提示。
  */
 import { requireSessionOrAppwrite } from './_lib/session.js';
-import { notifyEvent, EVENT_TYPES, sendReportReminders, buildCard } from './_lib/notify.js';
+import { notifyEvent, EVENT_TYPES, sendReportReminders, buildCard, notifyMemberDm } from './_lib/notify.js';
 import { listAll, findOne, getIntegration, logNotification } from './_lib/store.js';
 import { sendCardToUser, sendCardToChat, sendTextToUser } from './_lib/feishu.js';
 
@@ -85,6 +85,13 @@ export default async function handler(req, res) {
   // 飞书 OAuth 会话与 Appwrite 邮箱密码会话都接受（否则用密码登录时通知会被静默吞掉）。
   const session = await requireSessionOrAppwrite(req, res);
   if (!session) return;
+
+  // 站内通知配套的飞书单聊（发给本人，不是群）
+  if (req.body?.action === 'dm') {
+    const { member, title, summary, fields } = req.body || {};
+    const result = await notifyMemberDm({ member, title, summary, fields });
+    return res.status(200).json({ ok: true, ...result });
+  }
 
   // 任务指派提醒：给负责人发飞书单聊
   if (req.body?.action === 'task-assigned') {

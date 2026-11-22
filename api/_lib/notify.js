@@ -5,7 +5,7 @@
  * - 开关在 feishu_integrations 表中按事件类型分别控制。
  * - 发送失败只写日志并返回 failed，绝不抛出到业务流程，避免回滚已成功的业务操作。
  */
-import { getIntegration, logNotification, listAll } from './store.js';
+import { getIntegration, logNotification, listAll, findOne } from './store.js';
 import { sendCardToChat, sendTextToChat, sendCardToUser, sendTextToUser, FeishuError } from './feishu.js';
 
 export const EVENT_TYPES = {
@@ -58,6 +58,43 @@ export function buildCard(eventType, payload = {}) {
       },
     ],
   };
+}
+
+/**
+ * 给单个成员发飞书单聊（未绑定 open_id 时返回 skipped，不报错）。
+ * 用于任务指派、积分变动、申诉结果等「只和本人相关」的提醒。
+ */
+export async function notifyMemberDm({ member, title, summary, fields = [] } = {}) {
+  if (!member) return { status: 'skipped', reason: '缺少接收人' };
+  let person = null;
+  try { person = await findOne('members', 'name', member); }
+  catch (err) {
+    // 查询失败要能看出来，否则会被误判成「未绑定飞书」
+    return { status: 'failed', reason: `成员查询失败：${String(err.message || err).slice(0, 120)}` };
+  }
+  const openId = person?.feishu_open_id;
+  if (!openId) {
+    await logNotification({ event_type: 'dm.member', target_type: 'user', target_id: member, status: 'failed', error: '未绑定飞书 open_id', payload: JSON.stringify({ title }).slice(0, 600) });
+    return { status: 'skipped', reason: `${member} 未绑定飞书账号` };
+  }
+  const card = buildCard('member.status_changed', {
+    title: title || 'Team Hub 通知',
+    summary,
+    fields: fields?.length ? fields : [['接收人', member], ['时间', now()]],
+  });
+  try {
+    const { messageId } = await sendCardToUser(openId, card);
+    await logNotification({ event_type: 'dm.member', target_type: 'user', target_id: openId, status: 'sent', message_id: messageId, payload: JSON.stringify({ title }).slice(0, 600) });
+    return { status: 'sent', messageId };
+  } catch (err) {
+    try {
+      await sendTextToUser(openId, `${title || 'Team Hub'}${summary ? `\n${summary}` : ''}`);
+      return { status: 'sent', degraded: true };
+    } catch (inner) {
+      await logNotification({ event_type: 'dm.member', target_type: 'user', target_id: openId, status: 'failed', error: String(inner.message || inner).slice(0, 300), payload: JSON.stringify({ title }).slice(0, 600) });
+      return { status: 'failed', reason: String(inner.message || inner) };
+    }
+  }
 }
 
 /**
