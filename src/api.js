@@ -28,7 +28,9 @@ const TABLE_COLUMNS = {
   tasks: ['title', 'project', 'team', 'owner', 'collaborators', 'due', 'priority', 'type', 'status', 'importance', 'start', 'month', 'deliverable', 'link', 'note', 'progress', 'hours', 'year', 'points'],
   points_transactions: ['txid', 'member', 'team', 'type', 'source', 'date', 'status', 'reason', 'rule_id', 'report_id', 'points', 'year', 'month'],
   app_settings: ['key', 'value_zh', 'value_en'],
-  points_rules: ['action', 'type', 'unit', 'scope', 'points', 'enabled'],
+  points_rules: ['action', 'type', 'unit', 'scope', 'points', 'enabled', 'condition'],
+  events: ['title', 'event_date', 'event_time', 'location', 'capacity', 'description', 'status', 'created_by', 'created_at'],
+  event_signups: ['event_id', 'member_id', 'member_name', 'status', 'checked_in_at', 'note', 'created_at'],
   users: ['email', 'name', 'role', 'avatar', 'status'],
   team_members: ['member_id', 'team_id', 'is_primary', 'role'],
   task_members: ['task_id', 'member'],
@@ -128,16 +130,30 @@ async function upsertItem(table, item) {
   try {
     await tables.upsertRow({ databaseId: DB, tableId: table, rowId, data, permissions });
   } catch (err) {
-    // 兼容不支持 upsert 的旧版本 SDK / 端点。
-    try { await tables.createRow({ databaseId: DB, tableId: table, rowId, data, permissions }); }
-    catch (inner) { throw inner || err; }
+    // 兜底顺序：先 PATCH 更新（行多半已存在），再 CREATE（新行）。
+    // 直接 create 会在已存在的行上报 “already exists”，把真正的错误盖掉。
+    try {
+      await tables.updateRow({ databaseId: DB, tableId: table, rowId, data, permissions });
+    } catch (updateErr) {
+      try { await tables.createRow({ databaseId: DB, tableId: table, rowId, data, permissions }); }
+      catch (createErr) {
+        const composed = new Error(`${err?.message || err} | update: ${updateErr?.message || updateErr} | create: ${createErr?.message || createErr}`);
+        composed.code = createErr?.code || updateErr?.code || err?.code;
+        throw composed;
+      }
+    }
   }
   return { ...item, id: rowId };
 }
 
 // 只做增量写入，不删除云端其他行 —— 避免多组长并发填报时互相覆盖数据。
 export async function syncTable(table, items) {
-  const results = await Promise.allSettled(items.map(item => upsertItem(table, item)));
+  // 限并发：一次几十条并发容易触发 429，分 5 条一批更稳。
+  const results = [];
+  for (let i = 0; i < items.length; i += 5) {
+    const chunk = items.slice(i, i + 5);
+    results.push(...await Promise.allSettled(chunk.map(item => upsertItem(table, item))));
+  }
   const failed = results.filter(r => r.status === 'rejected');
   if (failed.length) console.warn(`[Team Hub] ${table} 同步有 ${failed.length} 行失败`, failed[0].reason);
   return failed.length === 0;

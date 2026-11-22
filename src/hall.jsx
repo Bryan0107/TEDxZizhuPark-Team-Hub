@@ -5,6 +5,7 @@ import {
   MessageSquare, ShieldCheck, BookOpen, Heart, Link2, Image as ImageIcon, Upload, Trash2, Eye, EyeOff,
 } from 'lucide-react';
 import { fetchTable, saveRow } from './api';
+import { logAudit } from './audit';
 
 const HALL_BASE = '/hall-of-honor';
 
@@ -375,12 +376,28 @@ function HallMemberJourney({ data, memberId, go, lang, notify }) {
 
 function HallArchive({ data, go, lang }) {
   const t = (zh, en) => lang === 'en' ? en : zh;
+  const [termFilter, setTermFilter] = useState('all');
+  const [visibleCount, setVisibleCount] = useState(12);
   const publicAssets = data.assets.filter(a => a.visibility === 'public');
   const publicStories = data.stories.filter(s => s.visibility === 'public');
+  const archivedTerms = data.terms
+    .filter(term => publicAssets.some(a => a.term_id === term.id))
+    .sort((a, b) => (b.year || 0) - (a.year || 0));
+  const filteredAssets = termFilter === 'all' ? publicAssets : publicAssets.filter(a => a.term_id === termFilter);
+  const shownAssets = filteredAssets.slice(0, visibleCount);
+  const untagged = publicAssets.filter(a => !a.term_id).length;
   return <div className="hall-page">
     <div className="hall-page-head"><span className="hall-eyebrow">06 · {t('十年记忆馆', 'Archive')}</span><h1>{t('影像与故事，让十年有温度', 'Images and stories that make a decade feel real')}</h1><p>{t('仅展示已授权公开的影像与故事。', 'Only authorized media and stories are shown.')}</p></div>
     <section className="hall-panel"><h2><ImageIcon size={18} />{t('活动影像', 'Photos & videos')}</h2>
-      {publicAssets.length ? <div className="hall-archive-grid">{publicAssets.map(a => <figure key={a.id}><img src={a.file_url} alt={a.title} loading="lazy" /><figcaption>{a.title}<small>{a.description}</small></figcaption></figure>)}</div> : <div className="hall-empty-block"><Camera size={22} /><strong>{t('影像档案待授权上传', 'Archive awaiting authorized uploads')}</strong><p>{t('历届活动照片、海报与视频需取得肖像与版权授权后才会公开展示。管理员可在纪念馆管理中逐条设置可见性。', 'Photos, posters and videos require portrait and copyright clearance.')}</p></div>}
+      {publicAssets.length ? <>
+        {archivedTerms.length > 0 && <div className="hall-photo-filter">
+          <button className={termFilter === 'all' ? 'on' : ''} onClick={() => { setTermFilter('all'); setVisibleCount(12); }}>{t(`全部 ${publicAssets.length}`, `All ${publicAssets.length}`)}</button>
+          {archivedTerms.map(term => <button key={term.id} className={termFilter === term.id ? 'on' : ''} onClick={() => { setTermFilter(term.id); setVisibleCount(12); }}>{term.year} · {term.theme_cn || `第 ${term.term_number} 届`}</button>)}
+          {untagged > 0 && <button className={termFilter === 'untagged' ? 'on' : ''} onClick={() => { setTermFilter('untagged'); setVisibleCount(12); }}>{t('未归档', 'Untagged')}</button>}
+        </div>}
+        <div className="hall-archive-grid">{(termFilter === 'untagged' ? filteredAssets : shownAssets).map(a => <figure key={a.id}><img src={a.file_url} alt={a.title} loading="lazy" /><figcaption>{a.title}<small>{a.description}</small></figcaption></figure>)}</div>
+        {termFilter !== 'untagged' && filteredAssets.length > shownAssets.length && <button className="hall-poster-btn hall-load-more" onClick={() => setVisibleCount(n => n + 12)}>{t(`加载更多（还有 ${filteredAssets.length - shownAssets.length} 张）`, `Load more (${filteredAssets.length - shownAssets.length} left)`)}</button>}
+      </> : <div className="hall-empty-block"><Camera size={22} /><strong>{t('影像档案待授权上传', 'Archive awaiting authorized uploads')}</strong><p>{t('历届活动照片、海报与视频需取得肖像与版权授权后才会公开展示。管理员可在纪念馆管理中逐条设置可见性。', 'Photos, posters and videos require portrait and copyright clearance.')}</p></div>}
     </section>
     <section className="hall-panel"><h2><Quote size={18} />{t('故事与寄语', 'Stories & messages')}</h2>
       {publicStories.length ? <div className="hall-story-list">{publicStories.map(s => <blockquote key={s.id}><Quote size={18} /><p>{s.content}</p><cite>{s.title}</cite></blockquote>)}</div> : <div className="hall-empty-block"><MessageSquare size={22} /><strong>{t('还没有公开的故事', 'No public stories yet')}</strong><p>{t('成员可在个人记忆页提交寄语，审核通过并授权后会出现在这里。', 'Members can submit messages from their journey page.')}</p></div>}
@@ -427,7 +444,7 @@ export default function HallOfHonor({ onExit }) {
  * - 登录页瀑布流（仅 public）
  * - 纪念馆「十年记忆馆 → 活动影像」（hall.jsx 的 HallArchive 直接读 legacy_assets）
  */
-function HallMediaPanel({ notify, t }) {
+function HallMediaPanel({ notify, t, terms = [], session }) {
   const [photos, setPhotos] = useState(null);
   const [style, setStyle] = useState('waterfall');
   const [busy, setBusy] = useState(false);
@@ -480,6 +497,7 @@ function HallMediaPanel({ notify, t }) {
         });
         const data = await res.json().catch(() => ({}));
         if (!res.ok || data.ok === false) throw new Error(data.error || t('上传失败', 'Upload failed'));
+        logAudit(session, '上传纪念馆影像', data.photo?.title || file.name, `id=${data.photo?.id || ''}`);
         done += 1;
       } catch (err) {
         notify?.(`${file.name}：${err.message}`);
@@ -516,9 +534,26 @@ function HallMediaPanel({ notify, t }) {
         body: JSON.stringify({ id: photo.id, visibility: next }),
       });
       if (!res.ok) throw new Error('failed');
+      logAudit(session, next === 'public' ? '影像公开' : '影像转内部', photo.title || photo.id, `visibility → ${next}`);
       notify?.(next === 'public' ? t('已公开', 'Published') : t('已转为内部', 'Set to internal'));
     } catch {
       notify?.(t('更新失败', 'Update failed'));
+      load();
+    }
+  };
+
+  const setTag = async (photo, termId) => {
+    setPhotos(list => list.map(p => (p.id === photo.id ? { ...p, term_id: termId } : p)));
+    try {
+      const res = await fetch('/api/hall/media', {
+        method: 'PATCH', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ id: photo.id, term_id: termId }),
+      });
+      if (!res.ok) throw new Error('failed');
+      logAudit(session, '影像归档届次', photo.title || photo.id, `term_id → ${termId || '未归档'}`);
+      notify?.(t('已归档到该届次', 'Tagged to edition'));
+    } catch {
+      notify?.(t('标签保存失败', 'Failed to save tag'));
       load();
     }
   };
@@ -529,6 +564,7 @@ function HallMediaPanel({ notify, t }) {
     try {
       const res = await fetch(`/api/hall/media?id=${encodeURIComponent(photo.id)}`, { method: 'DELETE' });
       if (!res.ok) throw new Error('failed');
+      logAudit(session, '删除纪念馆影像', photo.title || photo.id, photo.id);
       notify?.(t('已删除', 'Deleted'));
     } catch {
       notify?.(t('删除失败', 'Delete failed'));
@@ -569,6 +605,12 @@ function HallMediaPanel({ notify, t }) {
         <figcaption>
           <strong>{photo.title || t('未命名', 'Untitled')}</strong>
           <small>{photo.created_at}</small>
+          <div className="hall-media-tags">
+            <select value={photo.term_id || ''} onChange={e => setTag(photo, e.target.value)} title={t('归档届次', 'Edition')}>
+              <option value="">{t('未归档届次', 'No edition')}</option>
+              {terms.slice().sort((a, b) => (b.year || 0) - (a.year || 0)).map(term => <option key={term.id} value={term.id}>{term.year} · {term.theme_cn || term.theme_en || `第 ${term.term_number} 届`}</option>)}
+            </select>
+          </div>
           <div>
             <button className={photo.visibility === 'public' ? 'on' : ''} onClick={() => toggle(photo)}>
               {photo.visibility === 'public' ? <Eye size={12} /> : <EyeOff size={12} />}
@@ -592,7 +634,7 @@ function HallMediaPanel({ notify, t }) {
   </section>;
 }
 
-export function HallAdmin({ notify, lang = 'zh' }) {
+export function HallAdmin({ notify, lang = 'zh', session }) {
   const t = (zh, en) => lang === 'en' ? en : zh;
   const { data, error } = useHallData();
   const [draft, setDraft] = useState({});
@@ -614,6 +656,7 @@ export function HallAdmin({ notify, lang = 'zh' }) {
     const next = member.public_visibility === 'public' ? 'internal' : 'public';
     try {
       await saveRow('members', { ...member, public_visibility: next });
+      logAudit(session, next === 'public' ? '成员公开授权' : '成员取消公开', member.name, `public_visibility → ${next}`);
       notify?.(next === 'public' ? t('已授权公开', 'Made public') : t('已转为内部可见', 'Set to internal'));
     } catch { notify?.(t('更新失败', 'Update failed')); }
   };
@@ -621,7 +664,7 @@ export function HallAdmin({ notify, lang = 'zh' }) {
 
   return <div className="hall-admin">
     <div className="hall-admin-head"><h2>Hall of Honor Admin</h2><p>{t('届次资料、核验状态与公开授权管理。所有修改会记录操作时间。', 'Manage editions, verification and publication consent.')}</p></div>
-    <HallMediaPanel notify={notify} t={t} />
+    <HallMediaPanel notify={notify} t={t} terms={data.terms} session={session} />
     <section className="hall-panel"><h3>{t('届次与主题', 'Editions & themes')}</h3>
       <div className="hall-admin-table">{data.terms.map(term => {
         const d = draft[term.id] || {};

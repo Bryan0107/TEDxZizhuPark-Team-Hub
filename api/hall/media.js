@@ -155,6 +155,9 @@ export default async function handler(req, res) {
       const patch = {};
       if (body.visibility === 'public' || body.visibility === 'internal') patch.visibility = body.visibility;
       if (typeof body.title === 'string') patch.title = body.title.trim().slice(0, 120);
+      // 影像归档标签：届次 / 团队，用于公开影像墙筛选
+      if (typeof body.term_id === 'string') patch.term_id = body.term_id.slice(0, 36);
+      if (typeof body.team_id === 'string') patch.team_id = body.team_id.slice(0, 36);
       if (!Object.keys(patch).length) return res.status(400).json({ ok: false, error: '没有可更新的字段' });
       await upsert('legacy_assets', id, patch);
       return res.status(200).json({ ok: true, id, ...patch });

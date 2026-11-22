@@ -185,3 +185,17 @@ APPWRITE_KEY=<your-key> node scripts/seed-hall.mjs
 
 `index.html` 声明 `/favicon.svg`（红底白 x）、`/assets/icons/favicon-32.png`、`/assets/icons/apple-touch-icon.png`、`/manifest.webmanifest`。
 换标只需替换 `public/assets/icons/` 下同名文件与 `public/favicon.svg`。
+
+## 13. 七项功能扩展（2026-11-22）
+
+| 功能 | 入口 | 数据/接口 | 说明 |
+|---|---|---|---|
+| 活动报名 + 扫码签到 | 侧栏「活动与签到」 | `events`、`event_signups` 两张新表；`/checkin/:id` 公开页 | 报名→现场扫码→一键签到；签到按规则记「基础参与」积分；二维码由 `qrcode` 包本地生成（懒加载） |
+| 积分规则引擎 | 系统设置 → 积分规则 | `points_rules`（新增 `condition` 列） | 任务完成时按 `action/条件/单位` 自动算分，结果进「待审核」队列；手填积分仍直接入账 |
+| CSV 导入 | 系统设置 → 数据与备份 | `src/csv.js` + `CsvImportPanel` | 成员/任务/积分/团队四类模板；先预览校验再写入，逐行报告失败原因 |
+| 操作审计 | 系统设置 → 操作审计 | `audit_logs` | 成员公开授权、影像上传/公开/删除/归档、积分调整、创建活动均留痕 |
+| 看板拖拽 + 工时 | 任务管理 → 看板 / 任务详情 | `tasks.hours` | HTML5 拖拽跨列改状态；详情新增工时字段，计入团队工作量 |
+| 纪念馆影像增强 | 纪念馆管理 → 影像档案 | `legacy_assets.term_id` | 每张照片可归档到届次；公开影像墙按届次筛选、每次加载 12 张 |
+| 飞书深度集成 | 系统设置 → 飞书集成 | `/api/notify` 新增 `task-assigned`、`digest` | 任务指派给负责人发单聊；一键推送进度摘要到群 |
+
+**注意**：飞书两项功能依赖 `feishu_integrations.chat_id` 与成员 `feishu_open_id`；未配置时接口返回 `skipped`，不会报错也不阻塞业务。

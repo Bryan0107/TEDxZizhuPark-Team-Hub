@@ -2,7 +2,7 @@ import React, { useEffect, useState } from 'react';
 import {
   RefreshCw, ShieldCheck, ShieldAlert, Users, Building2, MessageSquare,
   Play, Zap, Save, Send, CircleCheck, CircleX, Clock3, Link2, KeyRound,
-  ScrollText, ArrowRight, Info, Loader2,
+  ScrollText, ArrowRight, Info, Loader2, ChartNoAxesColumn,
 } from 'lucide-react';
 import {
   feishuStatus, feishuSync, feishuSaveConfig, feishuTestMessage, feishuLogs, FEISHU_EVENTS,
@@ -31,6 +31,7 @@ export default function FeishuSettings({ isEn, isAdmin, notify, t }) {
   const [syncResult, setSyncResult] = useState(null);
   const [saving, setSaving] = useState(false);
   const [testing, setTesting] = useState(false);
+  const [digesting, setDigesting] = useState(false);
   const [chatId, setChatId] = useState('');
   const [chatName, setChatName] = useState('');
   const [interval, setIntervalMin] = useState(30);
@@ -38,6 +39,21 @@ export default function FeishuSettings({ isEn, isAdmin, notify, t }) {
   const [wsStatus, setWsStatus] = useState({ online: false, lastAt: '', type: '' });
   const [logType, setLogType] = useState('sync');
   const [logs, setLogs] = useState({ items: [], total: 0, loading: false });
+
+  const sendDigest = async () => {
+    if (!isAdmin) return notify(L('仅管理员可推送摘要', 'Only admins can push the digest'));
+    setDigesting(true);
+    try {
+      const res = await fetch('/api/notify', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ action: 'digest' }) });
+      const data = await res.json().catch(() => ({}));
+      notify(data.ok
+        ? L('进度摘要已推送到配置群', 'Digest sent to the configured chat')
+        : L(`推送失败：${data.error || data.message || '未知错误'}`, `Push failed: ${data.error || data.message || 'unknown'}`));
+      loadLogs('notification');
+    } catch (err) {
+      notify(L(`推送失败：${err.message}`, `Push failed: ${err.message}`));
+    } finally { setDigesting(false); }
+  };
 
   const loadStatus = async (silent = false, force = false) => {
     if (!silent) setLoading(true);
@@ -186,6 +202,9 @@ export default function FeishuSettings({ isEn, isAdmin, notify, t }) {
 
       <div className="fx-actions">
         <button className="button secondary" onClick={() => { loadStatus(false, true); loadWsStatus(); }}><RefreshCw size={15} />{L('重新检查连接', 'Re-check')}</button>
+        <button className="button secondary" onClick={sendDigest} disabled={digesting || !isAdmin}>
+          {digesting ? <Loader2 size={15} className="fx-spin" /> : <ChartNoAxesColumn size={15} />}{L('推送进度摘要到群', 'Push digest to chat')}
+        </button>
         <span className="fx-hint">{L(`通讯录 ${stats.members ?? 0} 位成员 · 其中 ${stats.fromFeishu ?? 0} 位来自飞书 · 待确认离开 ${stats.pendingLeave ?? 0} 位`, `${stats.members ?? 0} members · ${stats.fromFeishu ?? 0} from Feishu · ${stats.pendingLeave ?? 0} pending leave`)}</span>
       </div>
     </section>
@@ -306,6 +325,9 @@ export default function FeishuSettings({ isEn, isAdmin, notify, t }) {
         </button>
         <button className="button secondary" onClick={sendTest} disabled={testing || !isAdmin}>
           {testing ? <Loader2 size={15} className="fx-spin" /> : <Send size={15} />}{L('发送测试消息', 'Send test message')}
+        </button>
+        <button className="button secondary" onClick={sendDigest} disabled={digesting || !isAdmin}>
+          {digesting ? <Loader2 size={15} className="fx-spin" /> : <ChartNoAxesColumn size={15} />}{L('推送进度摘要', 'Push digest')}
         </button>
         <span className="fx-hint"><KeyRound size={13} /> {L('App Secret / Encrypt Key 仅存服务端', 'App secret lives server-side only')}</span>
       </div>

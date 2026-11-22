@@ -21,6 +21,10 @@ const Charts = {
 import { teams as initialTeams, members as initialMembers, initialTasks, initialReports, pointTransactions, reserveVolunteers } from './data';
 import { fetchTable, syncTable, fetchSettings, saveSettings, fetchAppSetting, saveAppSetting, removeRow, pingCloud, setAppwriteSession, APPWRITE_ENDPOINT, APPWRITE_PROJECT, DB } from './api';
 import HallOfHonor, { HallAdmin } from './hall';
+import { EventsPage, CheckInPage } from './events';
+import { CsvImportPanel, AuditPanel } from './admin';
+import { computeRulePoints, TASK_ACTION } from './rules';
+import { logAudit } from './audit';
 import './hall.css';
 import { getCurrentUser, signIn, signOut, updateMyPrefs, roleLabel } from './auth';
 import FeishuSettings from './FeishuSettings';
@@ -54,6 +58,7 @@ const dictionaries = {
     myPointsTitle: '我的积分', myPointsSubtitle: '每一份付出，都值得被看见',
     reportsTitle: '月度报告', reportsSubtitle: '记录团队每月的工作与成长',
     tasksTitle: '任务管理', tasksSubtitle: '让每一项工作清晰可追踪',
+    events: '活动与签到', eventsTitle: '活动与签到', eventsSubtitle: '报名、扫码签到与现场执行，一页管完',
     teamsTitle: '团队管理', teamsSubtitle: '协作，让好想法发生',
     membersTitle: '成员管理', membersSubtitle: '认识每一位共同创造的人',
     pointsManagementTitle: '积分管理', pointsManagementSubtitle: '让贡献被量化、被认可',
@@ -119,6 +124,7 @@ const dictionaries = {
     myPointsTitle: 'My Points', myPointsSubtitle: 'Every contribution deserves to be seen',
     reportsTitle: 'Monthly Reports', reportsSubtitle: 'A monthly record of team work and growth',
     tasksTitle: 'Tasks', tasksSubtitle: 'Track every collaboration from idea to delivery',
+    events: 'Events', eventsTitle: 'Events & check-in', eventsSubtitle: 'Sign-ups, QR check-in and on-site execution',
     teamsTitle: 'Teams', teamsSubtitle: 'Collaboration is where good ideas happen',
     membersTitle: 'Members', membersSubtitle: 'Meet the people creating together',
     pointsManagementTitle: 'Points Management', pointsManagementSubtitle: 'Make contributions measurable and recognized',
@@ -209,6 +215,7 @@ const PAGE_PATHS = {
   members: '/members',
   pointsManagement: '/points',
   analytics: '/analytics',
+  events: '/events',
   settings: '/settings',
   hallAdmin: '/hall-admin',
 };
@@ -222,9 +229,9 @@ function pageFromPath(pathname = window.location.pathname) {
 }
 
 const ROLE_PAGES = {
-  admin: ['dashboard', 'myPoints', 'reports', 'tasks', 'teams', 'members', 'pointsManagement', 'analytics', 'settings', 'hallAdmin'],
-  leader: ['dashboard', 'myPoints', 'reports', 'tasks', 'teams', 'members', 'pointsManagement', 'analytics', 'settings'],
-  member: ['dashboard', 'myPoints', 'teams', 'settings'],
+  admin: ['dashboard', 'myPoints', 'reports', 'tasks', 'events', 'teams', 'members', 'pointsManagement', 'analytics', 'settings', 'hallAdmin'],
+  leader: ['dashboard', 'myPoints', 'reports', 'tasks', 'events', 'teams', 'members', 'pointsManagement', 'analytics', 'settings'],
+  member: ['dashboard', 'myPoints', 'events', 'teams', 'settings'],
 };
 
 const getPageMeta = t => ({
@@ -232,6 +239,7 @@ const getPageMeta = t => ({
   myPoints: [t('myPointsTitle'), t('myPointsSubtitle')],
   reports: [t('reportsTitle'), t('reportsSubtitle')],
   tasks: [t('tasksTitle'), t('tasksSubtitle')],
+  events: [t('eventsTitle'), t('eventsSubtitle')],
   teams: [t('teamsTitle'), t('teamsSubtitle')],
   members: [t('membersTitle'), t('membersSubtitle')],
   pointsManagement: [t('pointsManagementTitle'), t('pointsManagementSubtitle')],
@@ -248,6 +256,7 @@ const getNavGroups = t => [
   { label: t('operations'), items: [
     { id: 'reports', label: t('reports'), icon: FileText, badge: 3 },
     { id: 'tasks', label: t('tasks'), icon: CheckSquare },
+    { id: 'events', label: t('events'), icon: CalendarDays },
   ]},
   { label: t('management'), items: [
     { id: 'teams', label: t('teams'), icon: UsersRound },
@@ -299,8 +308,11 @@ function resolveMember(members = [], name = '') {
   return partial.find(m => m.avatar || m.avatar_240 || m.avatar_72) || partial[0];
 }
 
-function AvatarStack({ names = [], max = 3 }) {
-  return <div className="avatar-stack">{names.slice(0, max).map((n, i) => <Avatar key={i} name={n} size="xs" />)}{names.length > max && <span className="avatar avatar-xs avatar-more">+{names.length - max}</span>}</div>;
+function AvatarStack({ names, max = 3 }) {
+  // 云端可空列（collaborators 未填时为 null）不能依赖默认参数，否则整页崩溃。
+  const list = Array.isArray(names) ? names.filter(Boolean) : [];
+  if (!list.length) return <span className="muted">—</span>;
+  return <div className="avatar-stack">{list.slice(0, max).map((n, i) => <Avatar key={i} name={n} size="xs" />)}{list.length > max && <span className="avatar avatar-xs avatar-more">+{list.length - max}</span>}</div>;
 }
 
 function Button({ children, variant = 'primary', icon: Icon, className = '', ...props }) {
@@ -755,6 +767,11 @@ export default function App() {
       : <div className="boot-screen boot-screen-dark"><img src="/assets/logo-white.png" alt="TEDxZizhuPark" /><span>Loading Team Hub…</span></div>;
   }
   if (!session) return <LoginPage onLogin={setSession} language={language} setLanguage={setLanguage} />;
+  // 扫码签到落地页：需登录，登录后直接回到该页
+  const checkinMatch = /^\/checkin\/([^/?#]+)/.exec(window.location.pathname);
+  if (checkinMatch) {
+    return <CheckInPage eventId={decodeURIComponent(checkinMatch[1])} session={session} isEn={language === 'en'} onDone={() => { window.history.replaceState({}, '', '/'); window.location.reload(); }} />;
+  }
   return <MainApp session={session} onLogout={handleLogout} onSessionUpdate={setSession} language={language} setLanguage={setLanguage} />;
 }
 
@@ -773,6 +790,10 @@ function MainApp({ session, onLogout, onSessionUpdate, language, setLanguage }) 
   const [teams, setTeams] = useCloudState('tedx-hub-v2-teams', 'teams', initialTeams);
   const [transactions, setTransactions, transactionsReady] = useCloudState('tedx-hub-v2-transactions', 'points_transactions', pointTransactions);
   const [reserves, setReserves] = useCloudState('tedx-hub-v2-reserves', 'reserve_volunteers', reserveVolunteers);
+  const [pointRules, setPointRules] = useState([]);
+  useEffect(() => { let alive = true; fetchTable('points_rules').then(rows => { if (alive) setPointRules(rows || []); }).catch(() => {}); return () => { alive = false; }; }, []);
+  const [events, setEvents] = useCloudState('tedx-hub-v2-events', 'events', []);
+  const [signups, setSignups] = useCloudState('tedx-hub-v2-event-signups', 'event_signups', []);
   const [modal, setModal] = useState(null);
   const [toast, setToast] = useState('');
   const [search, setSearch] = useState('');
@@ -885,36 +906,43 @@ function MainApp({ session, onLogout, onSessionUpdate, language, setLanguage }) 
 
   /** 任务积分入账：按任务 id 生成唯一流水，重复调用不会重复记账。 */
   const creditTaskPoints = (task, { silent = false } = {}) => {
-    const points = Number(task?.points) || 0;
     const ownerMember = resolveMember(activeMembers, task?.owner) || resolveMember(members, task?.owner);
     const owner = ownerMember?.name || task?.owner || '';
-    if (!owner || points <= 0 || !task?.id) return false;
+    if (!owner || !task?.id) return false;
     const txId = `tx_task_${task.id}`;
     if (transactions.some(tx => tx.id === txId)) return false;
+    // 任务未手填积分时，按「积分规则引擎」自动算分并进入待审核队列；
+    // 手填了积分则视为人工确认，直接入账（保持原有行为）。
+    const manual = Number(task?.points) || 0;
+    const auto = manual > 0 ? null : computeRulePoints(pointRules, task, TASK_ACTION);
+    const points = manual > 0 ? manual : auto?.points || 0;
+    if (points <= 0) return false;
+    const status = manual > 0 ? '已入账' : '待审核';
     const now = new Date();
     setTransactions(prev => prev.some(tx => tx.id === txId) ? prev : [{
       id: txId,
       txid: txId,
       member: owner,
       team: task.team || ownerMember?.team || '',
-      type: '任务贡献',
+      type: manual > 0 ? '任务贡献' : (auto?.rule?.type || '任务贡献'),
       source: `任务完成：${task.title || ''}`,
       date: `${now.getMonth() + 1}月${now.getDate()}日`,
-      status: '已入账',
+      status,
       points,
-      reason: `任务「${task.title || ''}」完成入账`,
+      reason: manual > 0 ? `任务「${task.title || ''}」完成入账` : `按规则「${auto?.rule?.action || ''}」自动计算，待审核`,
+      rule_id: auto?.rule?.id || '',
       report_id: String(task.id),
       year: now.getFullYear(),
       month: now.getMonth() + 1,
     }, ...prev]);
-    if (!silent) notify(`已为 ${owner} 记入 ${points} 分`);
+    if (!silent) notify(status === '待审核' ? `已按规则生成 ${points} 分待审核记录，请管理员确认` : `已为 ${owner} 记入 ${points} 分`);
     // 入账即通过飞书机器人通知（失败不影响业务）
     pushFeishu('points.created', {
       title: '任务积分入账',
       summary: `任务「${task.title || ''}」已完成，积分已记入负责人账户。`,
       fields: [['成员', owner], ['所属团队', task.team || '—'], ['积分变化', `+${points}`], ['来源', `任务完成：${task.title || ''}`]],
     });
-    return true;
+    return status;
   };
   const allowedPages = ROLE_PAGES[role] || ROLE_PAGES.member;
   const navGroups = getNavGroups(t).map(group => ({ ...group, items: group.items.filter(item => allowedPages.includes(item.id)) })).filter(group => group.items.length);
@@ -1060,10 +1088,11 @@ function MainApp({ session, onLogout, onSessionUpdate, language, setLanguage }) 
     case 'tasks': content = <TasksPage tasks={tasks} setTasks={setTasks} teams={teams} members={activeMembers} creditPoints={creditTaskPoints} {...shared} />; break;
     case 'teams': content = <TeamsPage teams={teamView} members={activeMembers} {...shared} />; break;
     case 'members': content = <MembersPage members={members} setMembers={setMembers} teams={teams} reserves={reserves} setReserves={setReserves} transactions={transactions} tasks={tasks} {...shared} />; break;
+    case 'events': content = <EventsPage events={events} setEvents={setEvents} signups={signups} setSignups={setSignups} members={activeMembers} myMember={myMember} role={role} session={session} isEn={isEn} notify={notify} logAudit={(action, target, detail) => logAudit(session, action, target, detail)} />; break;
     case 'myPoints': content = <MyPointsPage transactions={transactions} tasks={tasks} teams={teams} member={myMember} ready={transactionsReady} {...shared} />; break;
     case 'pointsManagement': content = <PointsManagement transactions={transactions} setTransactions={setTransactions} members={activeMembersWithPoints} isAdmin={role === 'admin'} {...shared} />; break;
     case 'analytics': content = <AnalyticsPage teams={teamView} monthlyTrend={monthlyTrend} transactions={transactions} tasks={tasks} members={activeMembers} {...shared} />; break;
-    case 'hallAdmin': content = <HallAdmin notify={notify} lang={language} />; break;
+    case 'hallAdmin': content = <HallAdmin notify={notify} lang={language} session={session} />; break;
     case 'settings': content = <SettingsPage {...shared} notifications={notifications} myTeam={myMember?.team || ''} session={session} role={role} orgSettings={orgSettings} onOrgSettings={setOrgSettings} onSessionUpdate={onSessionUpdate} language={language} teams={teamView} members={members} tasks={tasks} reports={reports} transactions={transactions} reserves={reserves} />; break;
     case 'dashboard': content = role === 'admin'
       ? <Dashboard teams={teamView} reports={reports} tasks={tasks} members={activeMembersWithPoints} transactions={transactions} monthlyTrend={monthlyTrend} greeting={greetingText} greetingLine={greetingLine} {...shared} />
@@ -1120,11 +1149,14 @@ function MainApp({ session, onLogout, onSessionUpdate, language, setLanguage }) 
       const created = { ...task, id: Date.now(), progress: task.status === '已完成' ? 100 : 0, collaborators: task.owner ? [task.owner] : [] };
       setTasks(prev => [created, ...prev]);
       const credited = created.status === '已完成' ? creditTaskPoints(created, { silent: true }) : false;
+    const creditedLabel = credited === '待审核' ? ` · ${created.points} 分待审核` : (credited ? ` · ${created.points} pts credited to ${created.owner}` : '');
       closeModal();
       notify(isEn
-        ? `Task created${credited ? ` · ${created.points} pts credited to ${created.owner}` : ''}`
-        : `新任务已创建${credited ? `，${created.points} 分已记入 ${created.owner}` : '并通知负责人'}`);
+        ? `Task created${creditedLabel}`
+        : `新任务已创建${credited === '待审核' ? `，${created.points} 分待审核` : (credited ? `，${created.points} 分已记入 ${created.owner}` : '并通知负责人')}`);
       notifyFeishu('event.created', { title: '新建活动/任务', summary: 'Team Hub 中创建了新的活动或任务。', fields: [['任务', task.title || '—'], ['所属团队', task.team || '—'], ['负责人', task.owner || '—'], ['截止日期', task.due || '—']] });
+      // 负责人单聊提醒（未绑定飞书账号时服务端自动跳过，不影响创建）
+      if (task.owner) fetch('/api/notify', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ action: 'task-assigned', task: created }) }).catch(() => {});
     }} />}
     {modal?.type === 'taskDetail' && (() => {
       const liveTask = tasks.find(item => item.id === modal.data.id) || modal.data;
@@ -1224,6 +1256,7 @@ function MainApp({ session, onLogout, onSessionUpdate, language, setLanguage }) 
     {modal?.type === 'pointsAdjust' && role === 'admin' && <PointsAdjust members={activeMembersWithPoints} onClose={closeModal} onSave={tx => {
       const record = { ...tx, id: `PT${Date.now()}`, date: '刚刚' };
       setTransactions(prev => [record, ...prev]);
+      logAudit(session, '积分调整', record.member, `${record.points > 0 ? '+' : ''}${record.points} 分 · ${record.source || ''} · ${record.status}`);
       closeModal();
       if (record.status === '待审核') {
         notify('积分流水已提交，等待审核入账');
@@ -1545,14 +1578,19 @@ function TasksPage({ tasks, setTasks, teams = [], members = [], creditPoints, se
     && (!teamFilter || task.team === teamFilter)
     && (!typeFilter || task.type === typeFilter)
     && `${task.title}${task.owner}${task.team}`.includes(query));
+  const [dragOver, setDragOver] = useState('');
+  const [draggingId, setDraggingId] = useState(null);
   const updateStatus = (task, status) => {
     setTasks(prev => prev.map(item => item.id === task.id ? { ...item, status, progress: status === '已完成' ? 100 : item.progress } : item));
     // 状态改为「已完成」时，自动把任务积分记到负责人账户（同一任务只入账一次）。
     let credited = false;
-    if (status === '已完成') credited = Boolean(creditPoints?.({ ...task, status }));
+    if (status === '已完成') credited = creditPoints?.({ ...task, status }) || false;
+    const creditNote = credited === '待审核'
+      ? (isEn ? ' · points pending review' : '，积分待审核')
+      : (credited ? (isEn ? ' · points credited' : '，任务积分已入账') : '');
     notify(isEn
-      ? `“${task.title}” moved to ${displayValue(status, 'en')}${credited ? ' · points credited' : ''}`
-      : `「${task.title}」已更新为${status}${credited ? '，任务积分已入账' : ''}`);
+      ? `“${task.title}” moved to ${displayValue(status, 'en')}${creditNote}`
+      : `「${task.title}」已更新为${status}${creditNote}`);
   };
   const statItems = [['全部任务', t('allTasks'), tasks.length, CheckSquare, 'gray'], ['进行中', displayValue('进行中', language), tasks.filter(task => task.status === '进行中').length, Activity, 'blue'], ['待审核', displayValue('待审核', language), tasks.filter(task => task.status === '待审核').length, Clock3, 'amber'], ['已完成', displayValue('已完成', language), tasks.filter(task => task.status === '已完成').length, CircleCheck, 'green']];
   return <div className="page">
@@ -1560,7 +1598,7 @@ function TasksPage({ tasks, setTasks, teams = [], members = [], creditPoints, se
     <div className="task-stats-row">{statItems.map(([key, label, num, Icon, tone]) => <button className={`task-stat ${filter === key ? 'selected' : ''}`} key={key} onClick={() => setFilter(key)}><div><strong>{num}</strong><span>{label}</span></div></button>)}</div>
     <div className="card table-card">
       <div className="table-toolbar"><div className="local-search"><Search size={16} /><input placeholder={t('searchTasks')} value={query} onChange={e => setQuery(e.target.value)} /></div><div className="toolbar-right"><select className="select-field" value={teamFilter} onChange={e => setTeamFilter(e.target.value)}><option value="">{t('allTeams')}</option>{teams.map(team => <option key={team.id} value={team.name}>{team.name}</option>)}</select><select className="select-field" value={typeFilter} onChange={e => setTypeFilter(e.target.value)}><option value="">{isEn ? 'All Types' : '全部类型'}</option>{typeOptions.map(type => <option key={type} value={type}>{displayValue(type, language)}</option>)}</select><div className="view-switch"><button className={view === 'list' ? 'active' : ''} onClick={() => setView('list')}><List size={17} /></button><button className={view === 'board' ? 'active' : ''} onClick={() => setView('board')}><LayoutGrid size={17} /></button></div></div></div>
-      {view === 'list' ? <div className="table-wrap"><table className="data-table task-table"><thead><tr><th>{t('taskName')}</th><th>{t('assignedTeam')}</th><th>{t('collaborators')}</th><th>{t('dueDate')}</th><th>{t('priority')}</th><th>{t('progress')}</th><th>{t('status')}</th><th /></tr></thead><tbody>{filtered.map(task => <tr key={task.id}><td><div className="task-title-cell"><button className={`task-check ${task.status === '已完成' ? 'checked' : ''}`} onClick={() => updateStatus(task, task.status === '已完成' ? '进行中' : '已完成')}>{task.status === '已完成' && <Check size={13} />}</button><div><strong>{task.title}</strong><small>{task.project} · {task.type}</small></div></div></td><td>{task.team}</td><td><AvatarStack names={task.collaborators} /></td><td><span className={String(task.due || '').includes('08') && task.status !== '已完成' ? 'text-red' : ''}>{task.due || '—'}</span></td><td><StatusBadge tone={task.priority === '重要' ? 'red' : 'gray'} dot={false}>{task.priority}</StatusBadge></td><td><div className="task-progress"><div className="progress-track"><i style={{ width: `${task.progress}%` }} /></div><span>{task.progress}%</span></div></td><td><select className={`status-select ${statusTone[task.status] || 'gray'}`} value={task.status} onChange={e => updateStatus(task, e.target.value)}>{['未开始', '进行中', '待审核', '已完成', '暂停'].map(option => <option key={option} value={option}>{displayValue(option, language)}</option>)}</select></td><td><button className="icon-button" title={isEn ? 'Task detail' : '任务详情'} onClick={() => setModal({ type: 'taskDetail', data: task })}><MoreHorizontal size={17} /></button></td></tr>)}</tbody></table>{!filtered.length && <EmptyState title={isEn ? 'No tasks found' : '没有找到相关任务'} description={isEn ? 'Try another filter or keyword.' : '试试调整筛选条件或搜索关键词。'} />}</div> : <div className="kanban-board">{['未开始', '进行中', '待审核', '已完成'].map(status => <div className="kanban-column" key={status}><div className="kanban-title"><StatusBadge>{status}</StatusBadge><span>{tasks.filter(task => task.status === status).length}</span><Plus size={15} onClick={() => setModal({ type: 'newTask' })} /></div>{tasks.filter(task => task.status === status).map(task => <div className="kanban-card" key={task.id} onClick={() => setModal({ type: 'taskDetail', data: task })}><div className="kanban-card-top"><span>{task.type}</span><MoreHorizontal size={16} /></div><h3>{task.title}</h3><p>{task.project}</p><div className="progress-track"><i style={{ width: `${task.progress}%` }} /></div><div className="kanban-footer"><AvatarStack names={task.collaborators} /><span><CalendarDays size={13} />{task.due}</span></div></div>)}</div>)}</div>}
+      {view === 'list' ? <div className="table-wrap"><table className="data-table task-table"><thead><tr><th>{t('taskName')}</th><th>{t('assignedTeam')}</th><th>{t('collaborators')}</th><th>{t('dueDate')}</th><th>{t('priority')}</th><th>{t('progress')}</th><th>{t('status')}</th><th /></tr></thead><tbody>{filtered.map(task => <tr key={task.id}><td><div className="task-title-cell"><button className={`task-check ${task.status === '已完成' ? 'checked' : ''}`} onClick={() => updateStatus(task, task.status === '已完成' ? '进行中' : '已完成')}>{task.status === '已完成' && <Check size={13} />}</button><div><strong>{task.title}</strong><small>{task.project} · {task.type}</small></div></div></td><td>{task.team}</td><td><AvatarStack names={task.collaborators} /></td><td><span className={String(task.due || '').includes('08') && task.status !== '已完成' ? 'text-red' : ''}>{task.due || '—'}</span></td><td><StatusBadge tone={task.priority === '重要' ? 'red' : 'gray'} dot={false}>{task.priority}</StatusBadge></td><td><div className="task-progress"><div className="progress-track"><i style={{ width: `${task.progress}%` }} /></div><span>{task.progress}%</span></div></td><td><select className={`status-select ${statusTone[task.status] || 'gray'}`} value={task.status} onChange={e => updateStatus(task, e.target.value)}>{['未开始', '进行中', '待审核', '已完成', '暂停'].map(option => <option key={option} value={option}>{displayValue(option, language)}</option>)}</select></td><td><button className="icon-button" title={isEn ? 'Task detail' : '任务详情'} onClick={() => setModal({ type: 'taskDetail', data: task })}><MoreHorizontal size={17} /></button></td></tr>)}</tbody></table>{!filtered.length && <EmptyState title={isEn ? 'No tasks found' : '没有找到相关任务'} description={isEn ? 'Try another filter or keyword.' : '试试调整筛选条件或搜索关键词。'} />}</div> : <div className="kanban-board">{['未开始', '进行中', '待审核', '已完成'].map(status => <div className={`kanban-column ${dragOver === status ? 'drop-target' : ''}`} key={status} onDragOver={e => { e.preventDefault(); if (dragOver !== status) setDragOver(status); }} onDragLeave={e => { if (!e.currentTarget.contains(e.relatedTarget)) setDragOver(prev => (prev === status ? '' : prev)); }} onDrop={e => { e.preventDefault(); const id = e.dataTransfer.getData('text/plain'); const dropped = tasks.find(x => String(x.id) === id); setDragOver(''); setDraggingId(null); if (dropped && dropped.status !== status) updateStatus(dropped, status); }}><div className="kanban-title"><StatusBadge>{status}</StatusBadge><span>{tasks.filter(task => task.status === status).length}</span><Plus size={15} onClick={() => setModal({ type: 'newTask' })} /></div>{tasks.filter(task => task.status === status).map(task => <div className={`kanban-card ${draggingId === task.id ? 'dragging' : ''}`} key={task.id} draggable onDragStart={e => { setDraggingId(task.id); e.dataTransfer.setData('text/plain', String(task.id)); e.dataTransfer.effectAllowed = 'move'; }} onDragEnd={() => { setDraggingId(null); setDragOver(''); }} onClick={() => setModal({ type: 'taskDetail', data: task })}><div className="kanban-card-top"><span>{task.type}</span><MoreHorizontal size={16} /></div><h3>{task.title}</h3><p>{task.project}</p><div className="progress-track"><i style={{ width: `${task.progress}%` }} /></div><div className="kanban-footer"><AvatarStack names={task.collaborators} /><span><CalendarDays size={13} />{task.due}</span></div></div>)}</div>)}</div>}
       <div className="table-footer"><span>{isEn ? `${filtered.length} tasks shown · Live data` : `显示 ${filtered.length} 项任务 · 实时数据`}</span><span>{isEn ? 'Completed tasks are included in monthly reports' : '已完成任务会自动计入对应月报'}</span></div>
     </div>
   </div>;
@@ -1729,7 +1767,8 @@ function MyPointsPage({ transactions, tasks, teams, member, navigate, exportCsv,
 function PointsManagement({ transactions, setTransactions, members, setModal, exportCsv, notify, navigate, t, isEn, language, isAdmin = false }) {
   const [tab, setTab] = useState('积分流水');
   const totalPoints = transactions.reduce((sum, tx) => sum + (Number(tx.points) || 0), 0);
-  const pendingPoints = transactions.filter(tx => tx.status === '待审核').reduce((sum, tx) => sum + (Number(tx.points) || 0), 0);
+  const pendingList = transactions.filter(tx => tx.status === '待审核');
+  const pendingPoints = pendingList.reduce((sum, tx) => sum + (Number(tx.points) || 0), 0);
   const averagePoints = transactions.length ? (totalPoints / transactions.length).toFixed(1) : '0';
   const ranked = [...members].sort((a, b) => (Number(b.points) || 0) - (Number(a.points) || 0)).slice(0, 3);
   // 积分规则来自云端 points_rules 表（与系统设置页同一数据源），不再使用写死的示例规则。
@@ -1761,6 +1800,19 @@ function PointsManagement({ transactions, setTransactions, members, setModal, ex
   };
   const tabs = [['积分流水', t('pointTransactions')], ['积分规则', t('pointsRules')], ['排行榜', t('leaderboard')]];
   return <div className="page"><PageTitle title={t('pointsManagementTitle')} subtitle={t('pointsManagementSubtitle')} actions={<>{isAdmin && <Button variant="secondary" icon={SlidersHorizontal} onClick={() => navigate('settings')}>{t('ruleSettings')}</Button>}{isAdmin ? <Button icon={Plus} onClick={() => setModal({ type: 'pointsAdjust' })}>{t('adjustPoints')}</Button> : <span className="admin-note">{isEn ? 'View only — only a super admin can adjust points' : '只读视图 · 积分调整与审核仅超级管理员可操作'}</span>}</>} />
+    {pendingList.length > 0 && <div className="pending-queue">
+      <div className="pending-queue-head">
+        <h3><Clock3 size={16} />{isEn ? 'Awaiting review' : '待审核积分'} <span>{isEn ? `${pendingList.length} entries · ${pendingPoints} pts` : `${pendingList.length} 条 · 共 ${pendingPoints} 分`}</span></h3>
+        {isAdmin && <button className="button button-secondary" onClick={() => pendingList.forEach(tx => reviewTransaction(tx, true))}><Check size={15} />{isEn ? 'Approve all' : '全部入账'}</button>}
+      </div>
+      <ul>{pendingList.slice(0, 6).map(tx => <li key={tx.id}>
+        <strong>{tx.member}</strong>
+        <span className="grow">{tx.source}</span>
+        <span>{tx.type}</span>
+        <span className="pts">+{tx.points}</span>
+        {isAdmin && <span className="row-actions"><button onClick={() => reviewTransaction(tx, true)}><Check size={13} />{isEn ? 'Approve' : '入账'}</button><button onClick={() => reviewTransaction(tx, false)}>{isEn ? 'Reject' : '驳回'}</button></span>}
+      </li>)}</ul>
+    </div>}
     <div className="metrics-grid compact"><MiniStat label={t('annualDistributed')} value={totalPoints.toLocaleString()} suffix={isEn ? 'pts' : '分'} icon={Coins} note={isEn ? 'From credited transactions' : '来自已入账流水'} /><MiniStat label={t('monthlyDistributed')} value={String(transactions.length)} suffix={isEn ? 'records' : '条'} icon={CircleCheck} tone="green" note={isEn ? 'Total transactions' : '积分流水总数'} /><MiniStat label={t('pointsPendingReview')} value={String(pendingPoints)} suffix={isEn ? 'pts' : '分'} icon={Clock3} tone="amber" note={isEn ? 'Awaiting review' : '等待管理员审核'} /><MiniStat label={t('averageAnnualPoints')} value={averagePoints} suffix={isEn ? 'pts' : '分'} icon={TrendingUp} tone="blue" note={isEn ? 'Average per transaction' : '每条流水平均积分'} /></div>
     <div className="card table-card"><div className="table-toolbar"><div className="filter-tabs">{tabs.map(([key, label]) => <button key={key} className={tab === key ? 'active' : ''} onClick={() => setTab(key)}>{label}</button>)}</div>{tab === '积分流水' && <div className="toolbar-right"><span className="static-year"><CalendarDays size={15} />{t('year2026')}</span><Button variant="secondary" icon={Download} onClick={() => exportCsv(isEn ? 'Point Transactions' : '积分流水')}>{isEn ? 'Export Transactions' : '导出流水'}</Button></div>}</div>
       {tab === '积分流水' && <><div className="table-wrap"><table className="data-table"><thead><tr><th>{t('member')}</th><th>{t('pointsSource')}</th><th>{t('pointsType')}</th><th>{t('points')}</th><th>{t('time')}</th><th>{t('status')}</th><th /></tr></thead><tbody>{transactions.map(tx => <tr key={tx.id}><td><div className="simple-person"><Avatar name={tx.member} size="xs" /><strong>{tx.member}</strong></div></td><td><strong>{tx.source}</strong><small className="transaction-id">{tx.id} · {tx.team}</small></td><td><StatusBadge>{tx.type}</StatusBadge></td><td><strong className={tx.points >= 0 ? 'positive-points' : 'negative-points'}>{tx.points > 0 ? '+' : ''}{tx.points}</strong></td><td className="muted">{tx.date}</td><td><StatusBadge>{tx.status}</StatusBadge></td><td><div className="row-actions">{isAdmin && tx.status === '待审核' ? <><button onClick={() => reviewTransaction(tx, true)}><Check size={14} />{isEn ? 'Approve' : '审核入账'}</button><button onClick={() => reviewTransaction(tx, false)}>{isEn ? 'Reject' : '驳回'}</button></> : <span className="muted">—</span>}</div></td></tr>)}</tbody></table></div><div className="table-footer"><span><LockKeyhole size={13} />{isEn ? 'Transactions cannot be deleted; use reversing adjustments' : '积分流水不可删除，仅支持反向调整'}</span><span>{isEn ? `${transactions.length} recent records` : `共 ${transactions.length} 条近期记录`}</span></div></>}
@@ -1983,6 +2035,7 @@ function SettingsPage({ notify, t, isEn, language, session, role, myTeam = '', o
     ['notifications', t('notificationSettings'), Bell],
     ['roles', t('rolePermissions'), ShieldCheck],
     ['data', t('dataBackup'), Database],
+    ['audit', L('操作审计', 'Audit log'), ShieldCheck],
     ['feishu', isEn ? 'Feishu' : '飞书集成', Link2],
   ];
 
@@ -2018,12 +2071,19 @@ function SettingsPage({ notify, t, isEn, language, session, role, myTeam = '', o
         {tab === 'points' && <>
           <section className="card settings-section"><div className="settings-title"><span><Coins size={19} /></span><div><h2>{L('积分规则', 'Points Rules')}</h2><p>{L('用于月报建议积分的自动计算；修改仅影响之后的记录，不追溯历史积分', 'Used to calculate suggested points; changes apply only to future records')}</p></div></div>
             <div className="rules-toolbar"><span>{L(`已启用 ${rules.filter(r => r.enabled).length} / ${rules.length} 条规则`, `${rules.filter(r => r.enabled).length} of ${rules.length} rules enabled`)}</span><div className="greeting-actions"><Button variant="secondary" icon={Plus} onClick={addRule} disabled={!isAdmin}>{L('新增规则', 'Add rule')}</Button><Button icon={Save} onClick={saveRules} disabled={saving || !isAdmin}>{L('保存规则', 'Save rules')}</Button></div></div>
-            <div className="table-wrap"><table className="data-table rules-table"><thead><tr><th>{L('贡献行为', 'Contribution')}</th><th>{L('积分类型', 'Type')}</th><th>{L('默认积分', 'Points')}</th><th>{L('计分单位', 'Unit')}</th><th>{L('启用', 'Enabled')}</th><th /></tr></thead><tbody>
+            <div className="table-wrap"><table className="data-table rules-table"><thead><tr><th>{L('贡献行为', 'Contribution')}</th><th>{L('积分类型', 'Type')}</th><th>{L('默认积分', 'Points')}</th><th>{L('计分单位', 'Unit')}</th><th>{L('适用条件', 'Applies to')}</th><th>{L('启用', 'Enabled')}</th><th /></tr></thead><tbody>
               {rules.map(r => <tr key={r.id}>
                 <td><input className="rule-input" value={r.action || ''} disabled={!isAdmin} placeholder={L('行为名称', 'Action name')} onChange={e => updateRule(r.id, { action: e.target.value })} /></td>
                 <td><select className="rule-input" value={r.type || '任务贡献'} disabled={!isAdmin} onChange={e => updateRule(r.id, { type: e.target.value })}>{RULE_TYPES.map(x => <option key={x}>{x}</option>)}</select></td>
                 <td><input className="rule-input rule-points" type="number" min="0" value={r.points ?? 0} disabled={!isAdmin} onChange={e => updateRule(r.id, { points: Number(e.target.value) })} /></td>
                 <td><input className="rule-input" value={r.unit || ''} disabled={!isAdmin} onChange={e => updateRule(r.id, { unit: e.target.value })} /></td>
+                <td><select className="rule-input" value={r.condition || ''} disabled={!isAdmin} onChange={e => updateRule(r.id, { condition: e.target.value })}>
+                  <option value="">{L('不限', 'Any')}</option>
+                  <option value='{"priority":"重要"}'>{L('重要任务', 'Important tasks')}</option>
+                  <option value='{"priority":"普通"}'>{L('普通任务', 'Normal tasks')}</option>
+                  <option value='{"type":"活动"}'>{L('活动类', 'Events')}</option>
+                  <option value='{"minHours":8}'>{L('工时 ≥ 8h', 'Hours ≥ 8')}</option>
+                </select></td>
                 <td><button className={`toggle ${r.enabled ? 'on' : ''}`} onClick={() => isAdmin && updateRule(r.id, { enabled: !r.enabled })}><i /></button></td>
                 <td><button className="icon-button" disabled={!isAdmin} onClick={() => deleteRule(r.id)}><Trash2 size={15} /></button></td>
               </tr>)}
@@ -2064,9 +2124,11 @@ function SettingsPage({ notify, t, isEn, language, session, role, myTeam = '', o
           </section>
         </>}
 
+        {tab === 'audit' && <AuditPanel isEn={isEn} />}
         {tab === 'feishu' && <FeishuSettings isEn={isEn} isAdmin={isAdmin} notify={notify} t={t} />}
 
         {tab === 'data' && <>
+          <CsvImportPanel isEn={isEn} notify={notify} onImported={() => notify(L('数据已写入云端，刷新页面即可看到', 'Imported data is now in the cloud'))} />
           <section className="card settings-section"><div className="settings-title"><span><Database size={19} /></span><div><h2>{L('云端连接', 'Cloud Connection')}</h2><p>{L('前端通过区域端点直接连接 Appwrite TablesDB', 'The frontend connects to Appwrite TablesDB via the regional endpoint')}</p></div></div>
             <div className="cloud-status-grid"><div><span>{L('服务端点', 'Endpoint')}</span><strong>{APPWRITE_ENDPOINT}</strong></div><div><span>Project ID</span><strong>{APPWRITE_PROJECT}</strong></div><div><span>{L('数据库', 'Database')}</span><strong>{DB}</strong></div><div><span>{L('区域', 'Region')}</span><strong>sgp · Singapore</strong></div></div>
             <div className="cloud-check"><StatusBadge tone={cloudCheck?.ok ? 'green' : 'gray'} dot={false}>{cloudCheck?.ok ? L('连接正常', 'Connected') : L('检测中', 'Checking')}</StatusBadge><span>{cloudCheck?.at ? formatTime(cloudCheck.at.toISOString()) : '—'}</span><Button variant="secondary" icon={Activity} onClick={() => pingCloud().then(setCloudCheck).catch(() => setCloudCheck({ ok: false, at: new Date() }))}>{L('重新检测', 'Recheck')}</Button></div>
@@ -2188,6 +2250,9 @@ function TaskFields({ form, update, teams = [], members = [], isEn }) {
       </Field>
       <Field label={L('截止日期', 'Due date')}>
         <input type="date" value={toDateInput(form.due)} onChange={e => update('due', fromDateInput(e.target.value))} />
+      </Field>
+      <Field label={L('工时（小时）', 'Hours')} hint={L('计入团队工作量；按小时计分的规则会用到', 'Counts toward workload and hourly rules')}>
+        <input type="number" min="0" step="0.5" value={form.hours ?? 0} onChange={e => update('hours', Math.max(0, Number(e.target.value) || 0))} />
       </Field>
       <Field label={L('重要程度', 'Priority')}>
         <div className="radio-group">{['普通', '重要'].map(p => <button type="button" key={p} className={form.priority === p ? 'selected' : ''} onClick={() => update('priority', p)}><i />{displayValue(p, isEn ? 'en' : 'zh')}</button>)}</div>
